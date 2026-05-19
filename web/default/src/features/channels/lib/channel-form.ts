@@ -65,6 +65,8 @@ export const channelFormSchema = z.object({
   is_enterprise_account: z.boolean().optional(), // OpenRouter specific
   vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
   aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
+  zlhub_video_key: z.string().optional(), // ZLHub video API key
+  zlhub_asset_token: z.string().optional(), // ZLHub asset access token
   azure_responses_version: z.string().optional(), // Azure specific
   // Field passthrough controls (stored in settings JSON)
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
@@ -123,6 +125,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   is_enterprise_account: false,
   vertex_key_type: 'json',
   aws_key_type: 'ak_sk',
+  zlhub_video_key: '',
+  zlhub_asset_token: '',
   azure_responses_version: '',
   // Field passthrough controls
   allow_service_tier: false,
@@ -179,6 +183,8 @@ export function transformChannelToFormDefaults(
   let azureResponsesVersion = ''
   let isEnterpriseAccount = false
   let awsKeyType: 'ak_sk' | 'api_key' = 'ak_sk'
+  let zlhubVideoKey = ''
+  let zlhubAssetToken = ''
   let allowServiceTier = false
   let disableStore = false
   let allowSafetyIdentifier = false
@@ -252,6 +258,8 @@ export function transformChannelToFormDefaults(
     vertex_key_type: vertexKeyType,
     azure_responses_version: azureResponsesVersion,
     aws_key_type: awsKeyType,
+    zlhub_video_key: zlhubVideoKey,
+    zlhub_asset_token: zlhubAssetToken,
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
     allow_include_obfuscation: allowIncludeObfuscation,
@@ -390,6 +398,18 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 }
 
 /**
+ * Build the ZLHub key from separate video key and asset token fields
+ */
+function buildZLHubKey(formData: ChannelFormValues): string {
+  if (formData.type !== 58) return formData.key
+  const videoKey = (formData.zlhub_video_key || '').trim()
+  const assetToken = (formData.zlhub_asset_token || '').trim()
+  if (!videoKey && !assetToken) return formData.key || ''
+  if (!assetToken || videoKey === assetToken) return videoKey
+  return `${videoKey}|${assetToken}`
+}
+
+/**
  * Transform form data to API payload for creating channel
  */
 export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
@@ -404,7 +424,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     name: formData.name,
     type: formData.type,
     base_url: formData.base_url || null,
-    key: formData.key,
+    key: buildZLHubKey(formData),
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -473,8 +493,9 @@ export function transformFormDataToUpdatePayload(
   }
 
   // Only include key if it was changed (not empty)
-  if (formData.key && formData.key.trim()) {
-    payload.key = formData.key
+  const combinedKey = buildZLHubKey(formData)
+  if (combinedKey && combinedKey.trim()) {
+    payload.key = combinedKey
   }
 
   // Clean up empty strings to null for optional fields

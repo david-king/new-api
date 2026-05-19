@@ -1421,6 +1421,60 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
+                {/* ZLHub (type 58) — dual key input */}
+                {currentType === 58 && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name='zlhub_video_key'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Video API Key *')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='password'
+                              placeholder={t(
+                                'Enter ZLHub video generation API key'
+                              )}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Used for Authorization: Bearer header in video APIs'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='zlhub_asset_token'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Asset Access Token')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='password'
+                              placeholder={t(
+                                'Enter asset review access token (leave empty if same as video key)'
+                              )}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Used for X-Access-Token header in asset review APIs'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
+
                 {/* AI Proxy Library (type 21) */}
                 {currentType === 21 && (
                   <FormField
@@ -1865,6 +1919,7 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
+                {currentType !== 58 && (
                 <FormField
                   control={form.control}
                   name='key'
@@ -2004,6 +2059,7 @@ export function ChannelMutateDrawer({
                     )
                   }}
                 />
+              )}
 
                 {currentType === 57 && (
                   <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
