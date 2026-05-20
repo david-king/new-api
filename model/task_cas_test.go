@@ -183,6 +183,28 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 	assert.EqualValues(t, TaskStatusFailure, reloaded.Status) // unchanged
 }
 
+func TestUpdatePrivateDataWithStatus_Win(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_private_data_win",
+		Status:   TaskStatusInProgress,
+		Progress: "50%",
+		Data:     json.RawMessage(`{}`),
+	}
+	insertTask(t, task)
+
+	task.PrivateData.LastPollAt = 12345
+	won, err := task.UpdatePrivateDataWithStatus(TaskStatusInProgress)
+	require.NoError(t, err)
+	assert.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
+	assert.Equal(t, int64(12345), reloaded.PrivateData.LastPollAt)
+}
+
 func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 	truncateTables(t)
 

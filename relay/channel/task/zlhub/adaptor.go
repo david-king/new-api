@@ -42,11 +42,11 @@ type MediaURL struct {
 }
 
 type requestPayload struct {
-	Model         string        `json:"model"`
-	Content       []ContentItem `json:"content,omitempty"`
-	CallbackURL   string        `json:"callback_url,omitempty"`
+	Model         string         `json:"model"`
+	Content       []ContentItem  `json:"content,omitempty"`
+	CallbackURL   string         `json:"callback_url,omitempty"`
 	GenerateAudio *dto.BoolValue `json:"generate_audio,omitempty"`
-	Ratio         string        `json:"ratio,omitempty"`
+	Ratio         string         `json:"ratio,omitempty"`
 	Duration      *dto.IntValue  `json:"duration,omitempty"`
 	Watermark     *dto.BoolValue `json:"watermark,omitempty"`
 	Seed          *dto.IntValue  `json:"seed,omitempty"`
@@ -97,16 +97,16 @@ type taskData struct {
 // ============================
 
 type AssetUploadRequest struct {
-	Images       []string `json:"images"`
-	AssetType    string   `json:"asset_type,omitempty"`
-	CallbackURL  string   `json:"callback_url,omitempty"`
+	Images      []string `json:"images"`
+	AssetType   string   `json:"asset_type,omitempty"`
+	CallbackURL string   `json:"callback_url,omitempty"`
 }
 
 type AssetUploadSyncResponse struct {
-	Code    int               `json:"code"`
-	TaskID  string            `json:"task_id"`
-	Status  string            `json:"status"`
-	Message string            `json:"message,omitempty"`
+	Code    int                `json:"code"`
+	TaskID  string             `json:"task_id"`
+	Status  string             `json:"status"`
+	Message string             `json:"message,omitempty"`
 	Result  *AssetReviewResult `json:"result,omitempty"`
 }
 
@@ -117,12 +117,12 @@ type AssetUploadAsyncResponse struct {
 }
 
 type AssetReviewResult struct {
-	ReviewBatchID string           `json:"review_batch_id"`
+	ReviewBatchID string            `json:"review_batch_id"`
 	Items         []AssetReviewItem `json:"items"`
 }
 
 type AssetReviewItem struct {
-	AssetID              string `json:"asset_id"`
+	AssetID               string `json:"asset_id"`
 	SourceURL             string `json:"source_url"`
 	AssetURL              string `json:"asset_url"`
 	DownstreamAssetID     string `json:"downstream_asset_id"`
@@ -136,13 +136,13 @@ type AssetReviewItem struct {
 }
 
 type AssetTaskQueryResponse struct {
-	Code         int               `json:"code"`
-	TaskID       string            `json:"task_id"`
-	TrackID      string            `json:"track_id"`
-	Status       string            `json:"status"`
-	ErrorMessage string            `json:"error_message,omitempty"`
-	TotalCount   int               `json:"total_count,omitempty"`
-	DoneCount    int               `json:"done_count,omitempty"`
+	Code         int                `json:"code"`
+	TaskID       string             `json:"task_id"`
+	TrackID      string             `json:"track_id"`
+	Status       string             `json:"status"`
+	ErrorMessage string             `json:"error_message,omitempty"`
+	TotalCount   int                `json:"total_count,omitempty"`
+	DoneCount    int                `json:"done_count,omitempty"`
 	Result       *AssetReviewResult `json:"result,omitempty"`
 }
 
@@ -171,8 +171,113 @@ func (a *TaskAdaptor) SetCredentials(baseURL, videoKey, assetToken string) {
 	a.assetToken = assetToken
 }
 
+// nativeRequestBodyKey 存储在 gin.Context 中的原始 ZLHub 原生请求体
+const nativeRequestBodyKey = "zlhub_native_request_body"
+
+// nativeRequestModelKey 存储从原生请求体中提取的 model 名称
+const nativeRequestModelKey = "zlhub_native_request_model"
+
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	// 先尝试解析为 ZLHub 原生格式（包含 content 数组）
+	var rawBody []byte
+	if storage, err := common.GetBodyStorage(c); err == nil {
+		rawBody, _ = storage.Bytes()
+		storage.Seek(0, io.SeekStart)
+		c.Request.Body = io.NopCloser(storage)
+	}
+
+	if len(rawBody) > 0 {
+		var nativeReq map[string]interface{}
+		if err := common.Unmarshal(rawBody, &nativeReq); err == nil {
+			if _, hasContent := nativeReq["content"]; hasContent {
+				// ZLHub 原生格式：从 content 数组提取 prompt，从顶层字段提取 model/duration
+				if err := a.parseNativeRequest(c, info, nativeReq, rawBody); err != nil {
+					return err
+				}
+				return nil
+			}
+		}
+	}
+
+	// 标准格式：走原有 ValidateBasicTaskRequest 逻辑
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+}
+
+// parseNativeRequest 从 ZLHub 原生格式请求中提取计费信息，构造 TaskSubmitReq
+func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.RelayInfo, nativeReq map[string]interface{}, rawBody []byte) *dto.TaskError {
+	req := relaycommon.TaskSubmitReq{}
+
+	// 提取 model
+	if model, ok := nativeReq["model"].(string); ok && model != "" {
+		req.Model = model
+	} else {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
+	}
+
+	// 从 content 数组提取 prompt（找 type=text 的条目）
+	if contentArr, ok := nativeReq["content"].([]interface{}); ok {
+		for _, item := range contentArr {
+			if m, ok := item.(map[string]interface{}); ok {
+				if m["type"] == "text" {
+					if text, ok := m["text"].(string); ok {
+						req.Prompt = text
+						break
+					}
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required (add a text item in content array)"), "missing_prompt", http.StatusBadRequest)
+	}
+
+	// 提取 duration
+	if dur, ok := nativeReq["duration"]; ok {
+		switch v := dur.(type) {
+		case float64:
+			req.Duration = int(v)
+		case string:
+			if i, err := strconv.Atoi(v); err == nil {
+				req.Duration = i
+			}
+		}
+	}
+
+	// 提取 images（从 content 数组中找 type=image_url 的条目）
+	if contentArr, ok := nativeReq["content"].([]interface{}); ok {
+		for _, item := range contentArr {
+			if m, ok := item.(map[string]interface{}); ok {
+				if m["type"] == "image_url" {
+					if imgObj, ok := m["image_url"].(map[string]interface{}); ok {
+						if url, ok := imgObj["url"].(string); ok {
+							req.Images = append(req.Images, url)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 构建 metadata，把原生请求中的扩展字段放进去
+	metadata := make(map[string]interface{})
+	for k, v := range nativeReq {
+		switch k {
+		case "model", "content", "duration", "prompt":
+			// 已提取，跳过
+		default:
+			metadata[k] = v
+		}
+	}
+	if len(metadata) > 0 {
+		req.Metadata = metadata
+	}
+
+	// 存储原生请求体和提取的 model，供 BuildRequestBody 使用
+	c.Set(nativeRequestBodyKey, rawBody)
+	c.Set(nativeRequestModelKey, req.Model)
+
+	relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, req)
+	return nil
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -212,6 +317,36 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	// 如果有原生请求体，直接使用（加 callback_url）
+	if rawBody, exists := c.Get(nativeRequestBodyKey); exists {
+		bodyBytes, ok := rawBody.([]byte)
+		if ok && len(bodyBytes) > 0 {
+			var nativeReq map[string]interface{}
+			if err := common.Unmarshal(bodyBytes, &nativeReq); err != nil {
+				return nil, errors.Wrap(err, "unmarshal native request body failed")
+			}
+
+			// 模型映射
+			if info.IsModelMapped {
+				nativeReq["model"] = info.UpstreamModelName
+			} else if model, ok := c.Get(nativeRequestModelKey); ok {
+				info.UpstreamModelName = model.(string)
+			}
+
+			// 设置 callback_url
+			if serverAddr := system_setting.ServerAddress; serverAddr != "" {
+				nativeReq["callback_url"] = serverAddr + "/api/zlhub/callback/video"
+			}
+
+			data, err := common.Marshal(nativeReq)
+			if err != nil {
+				return nil, err
+			}
+			return bytes.NewReader(data), nil
+		}
+	}
+
+	// 标准格式：从 TaskSubmitReq 转换为 ZLHub 原生格式
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil, err
@@ -332,6 +467,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) *r
 
 	// 从 metadata 解析其他字段（video_url, audio_url, ratio 等）
 	_ = taskcommon.UnmarshalMetadata(req.Metadata, &r)
+	if r.Ratio == "" && looksLikeAspectRatio(req.Size) {
+		r.Ratio = strings.TrimSpace(req.Size)
+	}
 
 	if req.Duration > 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
@@ -347,6 +485,16 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) *r
 	})
 
 	return &r
+}
+
+func looksLikeAspectRatio(size string) bool {
+	parts := strings.SplitN(strings.TrimSpace(size), ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	width, errWidth := strconv.Atoi(parts[0])
+	height, errHeight := strconv.Atoi(parts[1])
+	return errWidth == nil && errHeight == nil && width > 0 && height > 0
 }
 
 // extractImageRoles 从 metadata 中提取图片角色映射
@@ -368,11 +516,35 @@ func extractImageRoles(metadata map[string]interface{}) []string {
 	for _, item := range rolesSlice {
 		if m, ok := item.(map[string]interface{}); ok {
 			if role, ok := m["role"].(string); ok {
+				if idx, ok := imageRoleIndex(m["index"]); ok {
+					for len(roles) <= idx {
+						roles = append(roles, "")
+					}
+					roles[idx] = role
+					continue
+				}
 				roles = append(roles, role)
 			}
 		}
 	}
 	return roles
+}
+
+func imageRoleIndex(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, n >= 0
+	case int64:
+		return int(n), n >= 0
+	case float64:
+		idx := int(n)
+		return idx, n >= 0 && n == float64(idx)
+	case string:
+		idx, err := strconv.Atoi(n)
+		return idx, err == nil && idx >= 0
+	default:
+		return 0, false
+	}
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
@@ -383,6 +555,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
+	}
+
+	if qResp.Code != "" && qResp.Code != "success" {
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = "100%"
+		taskResult.Reason = qResp.Message
+		if taskResult.Reason == "" {
+			taskResult.Reason = "zlhub task query failed: " + qResp.Code
+		}
+		return &taskResult, nil
 	}
 
 	if qResp.Data == nil {
@@ -429,15 +611,22 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return &taskResult, nil
 }
 
-// AdjustBillingOnComplete 基于实际视频时长结算计费
+// AdjustBillingOnComplete 基于实际视频时长结算计费（按倍率模式）。
+// 按次计费（PerCallBilling）的任务不会走到这里，在 settleTaskBillingOnComplete 的第 0 步就跳过了。
+// 返回 0 表示不做 adaptor 调整，由上层 decide 走 token 重算或保持预扣。
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
-	actualDuration := taskResult.Duration
-	if actualDuration <= 0 {
+	bc := task.PrivateData.BillingContext
+	if bc == nil {
 		return 0
 	}
 
-	bc := task.PrivateData.BillingContext
-	if bc == nil {
+	// 按次计费：直接使用预扣额度，不做调整
+	if bc.PerCallBilling {
+		return 0
+	}
+
+	actualDuration := taskResult.Duration
+	if actualDuration <= 0 {
 		return 0
 	}
 
@@ -451,6 +640,9 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 	}
 
 	actualQuota := int(modelRatio * float64(common.QuotaPerUnit) * groupRatio * float64(actualDuration))
+	if actualQuota <= 0 {
+		return 0
+	}
 	return actualQuota
 }
 
@@ -503,8 +695,7 @@ func (a *TaskAdaptor) SubmitAssetReview(req *AssetUploadRequest, proxy string) (
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Access-Token", a.assetToken)
-	traceID, _ := common.GenerateRandomCharsKey(32)
-	httpReq.Header.Set("X-Track-Id", traceID)
+	httpReq.Header.Set("X-Track-Id", newAssetTrackID())
 
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
@@ -540,8 +731,7 @@ func (a *TaskAdaptor) SubmitAssetReviewAsync(req *AssetUploadRequest, proxy stri
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Access-Token", a.assetToken)
-	traceID, _ := common.GenerateRandomCharsKey(32)
-	httpReq.Header.Set("X-Track-Id", traceID)
+	httpReq.Header.Set("X-Track-Id", newAssetTrackID())
 
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
@@ -574,8 +764,7 @@ func (a *TaskAdaptor) QueryAssetTask(taskID string, proxy string) (*AssetTaskQue
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Access-Token", a.assetToken)
-	traceID, _ := common.GenerateRandomCharsKey(32)
-	httpReq.Header.Set("X-Track-Id", traceID)
+	httpReq.Header.Set("X-Track-Id", newAssetTrackID())
 
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
@@ -597,6 +786,10 @@ func (a *TaskAdaptor) QueryAssetTask(taskID string, proxy string) (*AssetTaskQue
 		return nil, errors.Wrap(err, "unmarshal asset task query response failed")
 	}
 	return &result, nil
+}
+
+func newAssetTrackID() string {
+	return common.GetUUID()
 }
 
 // ============================

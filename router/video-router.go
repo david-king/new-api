@@ -30,6 +30,21 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/videos", controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
+	// Task-compatible video routes, useful for providers that expose task/create and task/get APIs.
+	{
+		videoV1Router.POST("/task/create", controller.RelayTask)
+		videoV1Router.GET("/task/get/:task_id", controller.RelayTaskFetch)
+		videoV1Router.POST("/task/cancel/:task_id", controller.CancelZLHubTask)
+	}
+
+	zlhubAssetV1Router := router.Group("/v1")
+	zlhubAssetV1Router.Use(middleware.RouteTag("relay"))
+	zlhubAssetV1Router.Use(middleware.TokenAuth())
+	{
+		zlhubAssetV1Router.POST("/asset/upload/sync", controller.SubmitAssetReviewSync)
+		zlhubAssetV1Router.POST("/asset/upload/async", controller.SubmitAssetReviewAsync)
+		zlhubAssetV1Router.GET("/asset/task/:task_id", controller.QueryAssetTask)
+	}
 
 	klingV1Router := router.Group("/kling/v1")
 	klingV1Router.Use(middleware.RouteTag("relay"))

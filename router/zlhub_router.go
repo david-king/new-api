@@ -8,14 +8,14 @@ import (
 )
 
 func SetZLHubRouter(router *gin.Engine) {
-	// ZLHub 原生 API 透传 — 需要 Token 认证
-	// 视频生成：请求体和响应体原样透传，只加认证和追踪头
+	// ZLHub 原生 API — 需要 Token 认证
+	// 视频创建走标准 /v1/videos 路由（含计费、任务追踪、轮询），此处仅提供查询和取消
 	zlhubApiRouter := router.Group("/api/zlhub")
 	zlhubApiRouter.Use(middleware.RouteTag("zlhub"), middleware.TokenAuth())
 	{
-		// 视频生成（原生透传，与上游 API 格式完全一致）
-		zlhubApiRouter.POST("/v1/task/create", controller.ZLHubProxyVideoCreate)
+		// 视频任务查询（原生透传）
 		zlhubApiRouter.GET("/v1/task/get/:task_id", controller.ZLHubProxyVideoGet)
+		// 视频任务取消（原生透传）
 		zlhubApiRouter.POST("/v1/task/cancel/:task_id", controller.ZLHubProxyVideoCancel)
 
 		// 素材审核

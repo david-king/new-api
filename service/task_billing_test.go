@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
@@ -607,6 +608,20 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.Equal(t, "50%", reloaded.Progress)
+}
+
+func TestShouldThrottleZLHubVideoPoll(t *testing.T) {
+	zlhubChannel := &model.Channel{Type: constant.ChannelTypeZLHub}
+	doubaoChannel := &model.Channel{Type: constant.ChannelTypeDoubaoVideo}
+	task := &model.Task{
+		PrivateData: model.TaskPrivateData{
+			LastPollAt: 100,
+		},
+	}
+
+	assert.True(t, shouldThrottleZLHubVideoPoll(zlhubChannel, task, 159))
+	assert.False(t, shouldThrottleZLHubVideoPoll(zlhubChannel, task, 160))
+	assert.False(t, shouldThrottleZLHubVideoPoll(doubaoChannel, task, 159))
 }
 
 // ===========================================================================

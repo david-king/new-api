@@ -31,6 +31,8 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+const zlhubVideoPollIntervalSeconds int64 = 60
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -353,6 +355,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	if shouldSkipVideoTaskPoll(ctx, ch, task, time.Now().Unix()) {
+		return nil
+	}
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -499,6 +504,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func shouldSkipVideoTaskPoll(ctx context.Context, ch *model.Channel, task *model.Task, now int64) bool {
+	if !shouldThrottleZLHubVideoPoll(ch, task, now) {
+		if ch == nil || ch.Type != constant.ChannelTypeZLHub || task == nil {
+			return false
+		}
+		task.PrivateData.LastPollAt = now
+		won, err := task.UpdatePrivateDataWithStatus(task.Status)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("Failed to persist ZLHub task poll timestamp %s: %s", task.TaskID, err.Error()))
+			return false
+		}
+		if !won {
+			logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling because status changed before poll", task.TaskID))
+			return true
+		}
+		return false
+	}
+	logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling: last poll was %d seconds ago", task.TaskID, now-task.PrivateData.LastPollAt))
+	return true
+}
+
+func shouldThrottleZLHubVideoPoll(ch *model.Channel, task *model.Task, now int64) bool {
+	if ch == nil || task == nil || ch.Type != constant.ChannelTypeZLHub {
+		return false
+	}
+	lastPollAt := task.PrivateData.LastPollAt
+	return lastPollAt > 0 && now-lastPollAt < zlhubVideoPollIntervalSeconds
 }
 
 func redactVideoResponseBody(body []byte) []byte {

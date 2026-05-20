@@ -100,6 +100,7 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	LastPollAt     int64  `json:"last_poll_at,omitempty"`     // 最近一次上游轮询时间戳，用于渠道级限频
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -370,6 +371,7 @@ type taskSnapshot struct {
 	FinishTime int64
 	FailReason string
 	ResultURL  string
+	LastPollAt int64
 	Data       json.RawMessage
 }
 
@@ -380,6 +382,7 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
+		s.LastPollAt == other.LastPollAt &&
 		bytes.Equal(s.Data, other.Data)
 }
 
@@ -391,6 +394,7 @@ func (t *Task) Snapshot() taskSnapshot {
 		FinishTime: t.FinishTime,
 		FailReason: t.FailReason,
 		ResultURL:  t.PrivateData.ResultURL,
+		LastPollAt: t.PrivateData.LastPollAt,
 		Data:       t.Data,
 	}
 }
@@ -410,6 +414,16 @@ func (Task *Task) Update() error {
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// UpdatePrivateDataWithStatus updates only private_data behind a status guard.
+// It is used for polling metadata, where writing the whole task would be too broad.
+func (t *Task) UpdatePrivateDataWithStatus(fromStatus TaskStatus) (bool, error) {
+	result := DB.Model(t).Where("status = ?", fromStatus).Update("private_data", t.PrivateData)
 	if result.Error != nil {
 		return false, result.Error
 	}

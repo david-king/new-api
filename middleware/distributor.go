@@ -225,6 +225,29 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		relayMode := relayconstant.RelayModeVideoSubmit
 		c.Set("relay_mode", relayMode)
 		shouldSelectChannel = false
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/task/create") ||
+		strings.HasPrefix(c.Request.URL.Path, "/v1/task/get/") ||
+		strings.HasPrefix(c.Request.URL.Path, "/v1/task/cancel/") {
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodPost {
+			if strings.HasPrefix(c.Request.URL.Path, "/v1/task/cancel/") {
+				relayMode = relayconstant.RelayModeVideoFetchByID
+				shouldSelectChannel = false
+			} else {
+				relayMode = relayconstant.RelayModeVideoSubmit
+				req, err := getModelFromRequest(c)
+				if err != nil {
+					return nil, false, err
+				}
+				if req != nil {
+					modelRequest.Model = req.Model
+				}
+			}
+		} else if c.Request.Method == http.MethodGet {
+			relayMode = relayconstant.RelayModeVideoFetchByID
+			shouldSelectChannel = false
+		}
+		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos") {
 		//curl https://api.openai.com/v1/videos \
 		//  -H "Authorization: Bearer $OPENAI_API_KEY" \
