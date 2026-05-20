@@ -375,13 +375,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask parsed as new api response format: %+v", responseItems))
+		logger.LogDebug(ctx, "updateVideoSingleTask parsed as new api response format: %+v", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)
@@ -393,7 +393,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask taskResult: %+v", taskResult))
+	task.Data = redactVideoResponseBody(responseBody)
+
+	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
 	return ApplyVideoTaskResult(ctx, adaptor, task, responseBody, taskResult)
 }
@@ -413,7 +415,9 @@ func shouldSkipVideoTaskPoll(ctx context.Context, ch *model.Channel, task *model
 			logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling because status changed before poll", task.TaskID))
 			return true
 		}
-		return false
+	} else {
+		// No changes, skip update
+		logger.LogDebug(ctx, "No update needed for task %s", task.TaskID)
 	}
 	logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling: last poll was %d seconds ago", task.TaskID, now-task.PrivateData.LastPollAt))
 	return true
