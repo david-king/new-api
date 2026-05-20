@@ -570,9 +570,9 @@ func truncateBase64(s string) string {
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
-// 优先级：1. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
-//
-//  2. taskResult.TotalTokens > 0 → 按 token 重算
+// 优先级：
+//  1. 上游返回 token → 按 token 重算
+//  2. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
@@ -580,14 +580,14 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
-	// 1. 优先让 adaptor 决定最终额度
-	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+	// 1. 优先使用上游返回的真实 token，用于 ZLHub / Doubao 等按 token 返回 usage 的任务。
+	if taskResult.TotalTokens > 0 || taskResult.CompletionTokens > 0 {
+		RecalculateTaskQuotaByTaskResult(ctx, task, taskResult)
 		return
 	}
-	// 2. 回退到 token 重算
-	if taskResult.TotalTokens > 0 {
-		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
+	// 2. 没有 token 时，让 adaptor 决定最终额度（例如仅返回实际时长的渠道）。
+	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
+		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 		return
 	}
 	// 3. 无调整，保持预扣额度

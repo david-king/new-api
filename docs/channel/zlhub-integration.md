@@ -22,14 +22,27 @@ ZLHub 使用两套独立凭证，用 `|` 分隔：
 
 > 视频生成 API 使用 `Authorization: Bearer <key>`，素材审核 API 使用 `X-Access-Token: <token>`。new-api 会根据接口自动选用。
 
+## 推荐接口总览
+
+| 场景 | 推荐接口 | 兼容/高级接口 | ID 说明 |
+|------|----------|---------------|---------|
+| 创建视频任务 | `POST /v1/task/create` | `POST /v1/videos` | 返回 new-api 本地任务 ID：`task_xxx` |
+| 查询视频任务 | `GET /v1/task/get/{task_id}` | `GET /v1/videos/{task_id}` | 使用本地 `task_xxx` |
+| 取消视频任务 | `POST /v1/task/cancel/{task_id}` | `POST /api/zlhub/v1/task/cancel/{upstream_task_id}` | 推荐接口使用本地 `task_xxx`；原生透传使用上游 `cgt-xxx` |
+| 同步素材审核 | `POST /v1/asset/upload/sync` | `POST /api/zlhub/asset/upload` 且 body 中 `async=false` | 素材审核任务 ID 来自 ZLHub |
+| 异步素材审核 | `POST /v1/asset/upload/async` | `POST /api/zlhub/asset/upload` 且 body 中 `async=true` | 素材审核任务 ID 来自 ZLHub |
+| 查询素材审核 | `GET /v1/asset/task/{task_id}` | `GET /api/zlhub/asset/task/{task_id}` | 使用素材审核任务 ID |
+
+> 正常业务侧只需要保存和使用 new-api 返回的 `task_xxx`。ZLHub 上游任务 ID（如 `cgt-20260421174743-w9q85`）由系统保存在 `Task.PrivateData.UpstreamTaskID`，仅原生透传接口需要直接使用。
+
 ## 视频生成 API
 
-视频生成走 **标准 relay 任务流程**（与 doubao 等渠道一致），自动处理计费、任务追踪和轮询。支持两种请求格式：**标准格式**（推荐）和 **ZLHub 原生格式**（高级）。
+视频生成走 **标准 relay 任务流程**（与 doubao 等渠道一致），自动处理计费、任务追踪、取消和轮询。推荐使用 `/v1/task/create`、`/v1/task/get/{task_id}`、`/v1/task/cancel/{task_id}` 这一组任务风格接口；`/v1/videos` 仍保留为 OpenAI Video 兼容入口。
 
 ### 请求流程
 
 ```
-前端 POST /v1/videos
+客户端 POST /v1/task/create（或兼容入口 /v1/videos）
         │
         ▼
   controller.RelayTask()
@@ -49,15 +62,31 @@ ZLHub 使用两套独立凭证，用 `|` 分隔：
   成功后:
         ├─ SettleBilling → 结算计费
         ├─ LogTaskConsumption → 记录日志
-        └─ task.Insert() → 插入 Task 记录（含 BillingContext）
+        └─ task.Insert() → 插入 Task 记录（本地 task_xxx，PrivateData 保存上游 task_id 与 BillingContext）
 ```
 
-后台轮询 `TaskPollingLoop` 定期调用 `FetchTask` 查询上游状态 → `ParseTaskResult` 解析结果 → `AdjustBillingOnComplete` 最终结算。
+后台轮询 `TaskPollingLoop` 定期调用 `FetchTask` 查询上游状态 → `ParseTaskResult` 解析结果 → `AdjustBillingOnComplete` 最终结算。全局轮询循环每 15 秒扫描未完成任务，ZLHub 单个任务对上游的实际查询间隔至少 60 秒。
+
+```mermaid
+flowchart TD
+    A["客户端 POST /v1/task/create"] --> B["TokenAuth + Distribute 选择 ZLHub 渠道"]
+    B --> C["RelayTaskSubmit 预扣费并转换请求"]
+    C --> D["ZLHub POST /v1/task/create"]
+    D --> E["new-api 入库 Task: task_xxx"]
+    E --> F["后台轮询: 每任务至少 60 秒请求一次上游"]
+    F --> G["ZLHub GET /v1/task/get/{cgt-xxx}"]
+    G --> H{"上游状态"}
+    H -->|queued/running| E
+    H -->|succeeded| I["更新成功并优先按 usage token 结算"]
+    H -->|failed/cancelled/expired| J["更新失败并退款"]
+    K["客户端 GET /v1/task/get/{task_xxx}"] --> E
+    L["客户端 POST /v1/task/cancel/{task_xxx}"] --> M["new-api 用 cgt-xxx 调上游取消并退款"]
+```
 
 ### 格式一：标准 TaskSubmitReq（推荐）
 
 ```
-POST /v1/videos
+POST /v1/task/create
 ```
 
 请求体遵循 new-api 标准 `TaskSubmitReq` 格式，由 relay 系统自动转换为 ZLHub 原生格式。
@@ -70,7 +99,7 @@ POST /v1/videos
 | prompt | string | 是 | 文本提示词 |
 | images | string[] | 否 | 参考图片 URL 列表 |
 | duration | int | 否 | 视频时长（秒），默认 5 |
-| size | string | 否 | 视频比例，如 `16:9` |
+| size | string | 否 | 视频比例，如 `16:9`。当格式符合宽高比时会映射到 ZLHub `ratio` |
 | metadata | object | 否 | 扩展字段（见下方） |
 
 **metadata 扩展字段：**
@@ -80,14 +109,15 @@ POST /v1/videos
 | generate_audio | bool | 是否生成音频 |
 | watermark | bool | 是否添加水印 |
 | ratio | string | 视频比例 |
+| resolution | string | 输出分辨率，如 `480p` / `720p` / `1080p` |
 | seed | int | 随机种子 |
 | content | array | ZLHub 原生 content 数组（图片角色等高级用法） |
-| image_roles | array | 图片角色映射，如 `[{"index": 0, "role": "first_frame"}]` |
+| image_roles | array | 图片角色映射，如 `[{"index": 0, "role": "first_frame"}]`。`index` 会按图片下标生效 |
 
 **示例 — 基础文生视频：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -100,7 +130,7 @@ curl -X POST http://your-server/v1/videos \
 **示例 — 图生视频（参考图）：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -114,7 +144,7 @@ curl -X POST http://your-server/v1/videos \
 **示例 — 首尾帧生成（指定图片角色）：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -133,14 +163,14 @@ curl -X POST http://your-server/v1/videos \
 
 ### 格式二：ZLHub 原生格式（高级）
 
-同样通过 `POST /v1/videos` 发送，但请求体使用 ZLHub 上游的原生格式。adaptor 会自动识别 `content` 字段并原样转发到上游，同时自动提取计费所需字段（`model`、`duration`）和追踪字段（`prompt`）。
+同样通过 `POST /v1/task/create` 发送，但请求体使用 ZLHub 上游的原生格式。adaptor 会自动识别 `content` 字段并原样转发到上游，同时自动提取计费所需字段（`model`、`duration`）和追踪字段（`prompt`）。
 
 **原生格式与上游完全一致**，额外自动注入 `callback_url` 字段并处理模型映射。
 
 **示例 — 原生格式文生视频：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -158,7 +188,7 @@ curl -X POST http://your-server/v1/videos \
 **示例 — 原生格式多模态参考：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -179,7 +209,7 @@ curl -X POST http://your-server/v1/videos \
 **示例 — 原生格式首尾帧：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -199,7 +229,7 @@ curl -X POST http://your-server/v1/videos \
 **示例 — 使用审核通过的素材（`Asset://`）：**
 
 ```bash
-curl -X POST http://your-server/v1/videos \
+curl -X POST http://your-server/v1/task/create \
   -H "Authorization: Bearer <your-new-api-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -213,7 +243,7 @@ curl -X POST http://your-server/v1/videos \
 
 ### 响应格式
 
-创建成功返回标准 OpenAI Video 格式：
+创建成功返回标准 OpenAI Video 格式。这里的 `id` / `task_id` 是 new-api 本地任务 ID，不是 ZLHub 上游任务 ID。
 
 ```json
 {
@@ -228,10 +258,36 @@ curl -X POST http://your-server/v1/videos \
 ### 查询视频任务
 
 ```
-GET /v1/videos/{task_id}
+GET /v1/task/get/{task_id}
 ```
 
-通过标准 relay 查询接口获取任务状态，由轮询系统自动从 ZLHub 上游同步。
+通过标准 relay 查询接口获取任务状态，由轮询系统自动从 ZLHub 上游同步。`task_id` 使用创建接口返回的本地 `task_xxx`。兼容入口 `GET /v1/videos/{task_id}` 仍可使用。
+
+### 取消视频任务
+
+```
+POST /v1/task/cancel/{task_id}
+```
+
+推荐使用本地任务取消接口。new-api 会读取本地任务中的上游 ID，调用 ZLHub `/v1/task/cancel/{cgt-xxx}`，然后将本地任务标记为失败并退还已预扣额度。
+
+**示例：**
+
+```bash
+curl -X POST http://your-server/v1/task/cancel/task_abc123 \
+  -H "Authorization: Bearer <your-new-api-token>"
+```
+
+```json
+{
+  "code": "success",
+  "message": "",
+  "data": {
+    "id": "task_abc123",
+    "status": "cancelled"
+  }
+}
+```
 
 ### 原生透传接口（高级）
 
@@ -242,7 +298,7 @@ GET /v1/videos/{task_id}
 | 查询视频任务 | GET | `/api/zlhub/v1/task/get/{task_id}` |
 | 取消视频任务 | POST | `/api/zlhub/v1/task/cancel/{task_id}` |
 
-> **注意**：透传接口直接转发请求到 ZLHub 上游，`task_id` 为 ZLHub 上游的任务 ID。
+> **注意**：透传接口直接转发请求到 ZLHub 上游，`task_id` 为 ZLHub 上游任务 ID（`cgt-xxx`），不经过本地任务状态更新和退款逻辑。业务侧取消任务推荐使用 `POST /v1/task/cancel/{task_xxx}`。
 
 **取消任务示例：**
 
@@ -269,13 +325,13 @@ curl -X POST http://your-server/api/zlhub/v1/task/cancel/cgt-20260421174743-w9q8
 当前回调端点仅记录日志，**不触发任务状态更新**。任务状态更新完全依赖后台轮询系统：
 
 ```
-轮询循环 (每15秒)
+全局轮询循环 (每 15 秒扫描，ZLHub 单任务 60 秒节流)
     │
     ▼
 TaskPollingLoop → GetAllUnFinishSyncTasks()
     │
     ▼
-FetchTask → ZLHub GET /v1/task/get/{id}
+FetchTask → ZLHub GET /v1/task/get/{cgt-xxx}
     │
     ▼
 ParseTaskResult → 映射上游状态
@@ -285,7 +341,7 @@ ParseTaskResult → 映射上游状态
     └─ failed/cancelled/expired → 标记失败，退款
 ```
 
-轮询系统仅轮询 Task 表中未完成的任务，终态任务自动停止轮询。超时时间由系统配置 `TaskTimeoutMinutes` 控制，超时自动标记失败并退款。
+轮询系统仅轮询 Task 表中未完成的任务，终态任务自动停止轮询。超时时间由系统配置 `TaskTimeoutMinutes` 控制，超时自动标记失败并退款。为了符合 ZLHub 查询频率要求，同一个 ZLHub 视频任务 60 秒内不会重复请求上游。
 
 ### 任务状态映射
 
@@ -297,12 +353,6 @@ ParseTaskResult → 映射上游状态
 | failed | TaskStatusFailure (100%) | 退款 |
 | cancelled | TaskStatusFailure (100%) | 退款 |
 | expired | TaskStatusFailure (100%) | 退款 |
-
-### 取消任务
-
-通过透传接口 `POST /api/zlhub/v1/task/cancel/{upstream_task_id}` 直接调用 ZLHub 上游取消。取消后，轮询系统在下一轮会查询到 `cancelled` 状态，自动标记失败并退款。
-
-> **注意**：`task_id` 为 ZLHub 上游的任务 ID（如 `cgt-20260421174743-w9q85`），而非 new-api 的 task ID。可通过 `GET /v1/videos/{new_api_task_id}` 查询任务详情获取上游 ID。
 
 ### 注意事项
 
@@ -320,11 +370,30 @@ ParseTaskResult → 映射上游状态
 
 | 操作 | 方法 | URL | 对应上游 |
 |------|------|-----|----------|
-| 同步提交审核 | POST | `/api/zlhub/asset/upload?async=false` | `https://asset.zlhub.cn/api/asset/upload/sync` |
-| 异步提交审核 | POST | `/api/zlhub/asset/upload?async=true` | `https://asset.zlhub.cn/api/asset/upload/async` |
-| 查询审核结果 | GET | `/api/zlhub/asset/task/{task_id}` | `https://asset.zlhub.cn/api/task/{task_id}` |
+| 同步提交审核 | POST | `/v1/asset/upload/sync` | `https://asset.zlhub.cn/api/asset/upload/sync` |
+| 异步提交审核 | POST | `/v1/asset/upload/async` | `https://asset.zlhub.cn/api/asset/upload/async` |
+| 查询审核结果 | GET | `/v1/asset/task/{task_id}` | `https://asset.zlhub.cn/api/task/{task_id}` |
 
-所有素材审核接口需要 new-api Token 认证，`X-Access-Token` 由系统根据渠道 Key 自动填充。
+兼容入口仍保留：
+
+| 操作 | 方法 | URL | 说明 |
+|------|------|-----|------|
+| 提交审核 | POST | `/api/zlhub/asset/upload` | body 中 `async=true` 走异步，否则走同步 |
+| 查询审核结果 | GET | `/api/zlhub/asset/task/{task_id}` | 与 `/v1/asset/task/{task_id}` 等价 |
+
+所有素材审核接口需要 new-api Token 认证，`X-Access-Token` 由系统根据渠道 Key 自动填充。可通过 query 参数 `channel_id` 指定 ZLHub 渠道，不传时自动取可用的 ZLHub 渠道。
+
+```mermaid
+flowchart TD
+    A["客户端 POST /v1/asset/upload/sync 或 /async"] --> B["TokenAuth 校验 new-api Token"]
+    B --> C["读取 ZLHub 渠道 video_key / asset_token"]
+    C --> D["填充 X-Access-Token 与 X-Track-Id"]
+    D --> E["ZLHub Asset API"]
+    E --> F{"同步或异步"}
+    F -->|sync| G["直接返回审核结果"]
+    F -->|async| H["返回素材审核 task_id"]
+    I["客户端 GET /v1/asset/task/{task_id}"] --> J["ZLHub GET /api/task/{task_id}"]
+```
 
 ### 提交审核
 
@@ -333,8 +402,7 @@ ParseTaskResult → 映射上游状态
 ```json
 {
     "images": ["https://example.com/photo1.jpg", "https://example.com/photo2.jpg"],
-    "asset_type": "Image",
-    "async": false
+    "asset_type": "Image"
 }
 ```
 
@@ -342,14 +410,14 @@ ParseTaskResult → 映射上游状态
 |------|------|------|------|
 | images | string[] | 是 | 素材 URL 列表（最多 50 条），仅 http/https，不支持 base64 |
 | asset_type | string | 否 | `Image` / `Video` / `Audio`，默认 `Image` |
-| async | bool | 否 | `true`=异步（立即返回任务 ID），`false`=同步（等待审核结果，默认） |
+| async | bool | 否 | 仅兼容入口 `/api/zlhub/asset/upload` 使用；`/v1/asset/upload/sync` 和 `/v1/asset/upload/async` 由路径决定同步/异步 |
 
-同步提交超时 60 秒降级为异步模式。完整响应格式见 [API 文档 §2.7](../../zlhub-api-docs.md)。
+完整响应格式见 [API 文档 §2.7](../../zlhub-api-docs.md)。
 
 ### 查询审核结果
 
 ```
-GET /api/zlhub/asset/task/{task_id}
+GET /v1/asset/task/{task_id}
 ```
 
 ### 回调
@@ -403,19 +471,35 @@ GET /api/zlhub/asset/task/{task_id}
 
 | 模式 | 配置 | 预扣额度 | 结算 | 说明 |
 |------|------|----------|------|------|
-| **按次计费** | 配置模型价格（ModelPrice） | `price × QuotaPerUnit × groupRatio × duration` | 保持预扣，不做差额结算 | 固定单价，适合简单定价 |
-| **按倍率计费** | 配置模型倍率（ModelRatio） | `modelRatio × QuotaPerUnit × groupRatio / 2 × duration` | 任务完成后按实际时长差额结算 | 适合按时长计费 |
+| **模型价格计费** | 配置模型价格（ModelPrice） | `price × QuotaPerUnit × groupRatio × duration` | 保持预扣，不按实际时长调整 | 当前实现会乘请求时长；如需真正按次固定价格，使用 `TASK_PRICE_PATCH` |
+| **模型倍率计费** | 配置模型倍率（ModelRatio） | `modelRatio × QuotaPerUnit × groupRatio / 2 × duration` | 成功后优先按上游 `usage.completion_tokens` 重算；无 token 时才按实际时长兜底 | 推荐用于 ZLHub 按 token 计费 |
 | **阶梯计费** | 配置 `billing_mode=tiered_expr` | 表达式计算 | 表达式结算 | 适合复杂阶梯定价 |
 
 ### 计费流程
 
 1. **预扣费**：任务创建时，`EstimateBilling` 从请求中提取 `duration`（默认 5 秒），作为 `OtherRatios["seconds"]` 乘到基础额度上
 2. **结算**：
-   - **按次**：跳过结算，保持预扣额度不变
-   - **按倍率**：`AdjustBillingOnComplete` 根据上游实际返回的 `duration` 差额结算——`实际额度 = 预扣额度 × (实际时长 / 预估时长)`
+   - **模型价格计费**：跳过完成结算，保持创建时预扣额度不变
+   - **模型倍率计费**：如果上游返回 `usage.total_tokens` / `usage.completion_tokens`，按真实 token 重算；`seconds` 仅用于预扣估算，token 重算时不会再乘秒数
+   - **模型倍率计费兜底**：如果上游没有返回 token，但返回了 `duration`，才按 `modelRatio × QuotaPerUnit × groupRatio × actualDuration` 兜底结算
    - **阶梯**：由 `billingexpr` 表达式计算
 3. **退款**：任务失败或取消时自动退还预扣额度
 4. **轮询更新**：后台 `TaskPollingLoop` 调用 `FetchTask` 查询上游状态 → `ParseTaskResult` → `AdjustBillingOnComplete` 最终结算
+
+> 后台按模型名配置即可生效，ZLHub 当前模型名为 `doubao-seedance-2.0` 与 `doubao-seedance-2.0-fast`。如果按 `$ / 1M tokens` 配置，前端会换算为 ModelRatio，任务完成后按 ZLHub 返回的真实 token 结算。
+
+### Seedance 2.0 价格修正
+
+火山官方价格按 **输出分辨率** 和 **输入是否包含视频** 区分。后台建议把模型基础价格配置为“480p/720p 且输入不含视频”的单价：
+
+| 模型 | 基础配置价格 | 自动修正场景 | 修正倍率 |
+|------|--------------|--------------|----------|
+| `doubao-seedance-2.0` | 46 元/百万 token（折算为美元后填入后台） | 480p/720p，输入包含视频 | `28 / 46` |
+| `doubao-seedance-2.0` | 同上 | 1080p，输入不含视频 | `51 / 46` |
+| `doubao-seedance-2.0` | 同上 | 1080p，输入包含视频 | `31 / 46` |
+| `doubao-seedance-2.0-fast` | 37 元/百万 token（折算为美元后填入后台） | 输入包含视频 | `22 / 37` |
+
+`seconds` 只用于任务创建时预扣额度估算；任务成功后以返回的 `usage.completion_tokens` 为准。`doubao` 原生视频渠道和 ZLHub 渠道共用这组 Seedance 2.0 价格修正规则。
 
 ### duration 提取优先级
 
@@ -429,14 +513,13 @@ GET /api/zlhub/asset/task/{task_id}
 
 ```python
 import requests
-import time
 
 BASE = "http://your-server"
 TOKEN = "your-new-api-token"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-# ── 方式一：标准格式（推荐）──
-resp = requests.post(f"{BASE}/v1/videos", headers=HEADERS, json={
+# 方式一：标准格式（推荐）
+resp = requests.post(f"{BASE}/v1/task/create", headers=HEADERS, json={
     "model": "doubao-seedance-2.0",
     "prompt": "一个女孩在海边奔跑",
     "duration": 5
@@ -444,8 +527,8 @@ resp = requests.post(f"{BASE}/v1/videos", headers=HEADERS, json={
 task_id = resp.json()["id"]
 print(f"任务已创建: {task_id}")
 
-# ── 方式二：ZLHub 原生格式 ──
-resp = requests.post(f"{BASE}/v1/videos", headers=HEADERS, json={
+# 方式二：ZLHub 原生格式
+resp = requests.post(f"{BASE}/v1/task/create", headers=HEADERS, json={
     "model": "doubao-seedance-2.0",
     "content": [
         {"type": "text", "text": "一个女孩在海边奔跑"}
@@ -458,19 +541,17 @@ task_id = resp.json()["id"]
 print(f"任务已创建: {task_id}")
 
 # 查询任务状态
-resp = requests.get(f"{BASE}/v1/videos/{task_id}", headers=HEADERS)
+resp = requests.get(f"{BASE}/v1/task/get/{task_id}", headers=HEADERS)
 print(resp.json())
 
-# 取消任务（原生透传，使用上游 task ID）
-upstream_task_id = "cgt-20260421174743-w9q85"  # 从上游响应获取
-resp = requests.post(f"{BASE}/api/zlhub/v1/task/cancel/{upstream_task_id}", headers=HEADERS)
+# 取消任务（推荐，使用本地 task_xxx）
+resp = requests.post(f"{BASE}/v1/task/cancel/{task_id}", headers=HEADERS)
 print(resp.json())
 
 # 素材审核（同步）
-resp = requests.post(f"{BASE}/api/zlhub/asset/upload", headers=HEADERS, json={
+resp = requests.post(f"{BASE}/v1/asset/upload/sync", headers=HEADERS, json={
     "images": ["https://example.com/photo.jpg"],
-    "asset_type": "Image",
-    "async": False
+    "asset_type": "Image"
 })
 print(resp.json())
 ```

@@ -539,6 +539,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	usage, cost := taskUsageAndCost(task.Data)
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -559,6 +560,60 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
+		Usage:      usage,
+		Cost:       cost,
 		Data:       task.Data,
+	}
+}
+
+func taskUsageAndCost(data []byte) (*dto.Usage, any) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var root map[string]any
+	if err := common.Unmarshal(data, &root); err != nil {
+		return nil, nil
+	}
+	payload := root
+	if nested, ok := root["data"].(map[string]any); ok {
+		payload = nested
+	}
+
+	usageMap, _ := payload["usage"].(map[string]any)
+	usage := taskUsageFromMap(usageMap)
+	return usage, payload["cost"]
+}
+
+func taskUsageFromMap(usageMap map[string]any) *dto.Usage {
+	if len(usageMap) == 0 {
+		return nil
+	}
+	completionTokens := taskIntFromAny(usageMap["completion_tokens"])
+	totalTokens := taskIntFromAny(usageMap["total_tokens"])
+	if totalTokens <= 0 {
+		totalTokens = completionTokens
+	}
+	if completionTokens <= 0 && totalTokens <= 0 {
+		return nil
+	}
+	return &dto.Usage{
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+	}
+}
+
+func taskIntFromAny(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		i, _ := strconv.Atoi(n)
+		return i
+	default:
+		return 0
 	}
 }

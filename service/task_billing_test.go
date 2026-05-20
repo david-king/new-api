@@ -699,6 +699,65 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+func TestSettle_TotalTokensTakePriorityAndSkipSecondsRatio(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 32, 32, 32
+	const initQuota, preConsumed = 10000, 5000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-token-priority", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ModelRatio = 2
+	task.PrivateData.BillingContext.GroupRatio = 1
+	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
+		"seconds":     6,
+		"video_input": 0.5,
+	}
+
+	adaptor := &mockAdaptor{adjustReturn: 9000}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 100}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	const actualQuota = 100 // 100 tokens * modelRatio 2 * video_input 0.5; seconds is only a precharge estimate.
+	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+}
+
+func TestSettle_CompletionTokensUseCompletionRatio(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 33, 33, 33
+	const initQuota, preConsumed = 10000, 5000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-completion-ratio", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ModelRatio = 2
+	task.PrivateData.BillingContext.GroupRatio = 1
+	task.PrivateData.BillingContext.CompletionRatio = 3
+
+	adaptor := &mockAdaptor{adjustReturn: 0}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 120, CompletionTokens: 20}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	const actualQuota = 120 // completion_tokens is authoritative for video usage: 20 * 3 * modelRatio 2
+	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+}
+
 func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

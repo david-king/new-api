@@ -47,6 +47,7 @@ type requestPayload struct {
 	CallbackURL   string         `json:"callback_url,omitempty"`
 	GenerateAudio *dto.BoolValue `json:"generate_audio,omitempty"`
 	Ratio         string         `json:"ratio,omitempty"`
+	Resolution    string         `json:"resolution,omitempty"`
 	Duration      *dto.IntValue  `json:"duration,omitempty"`
 	Watermark     *dto.BoolValue `json:"watermark,omitempty"`
 	Seed          *dto.IntValue  `json:"seed,omitempty"`
@@ -304,6 +305,8 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
+
+	ratios := map[string]float64{}
 	duration := req.Duration
 	if duration <= 0 {
 		if sec, err := strconv.Atoi(req.Seconds); err == nil && sec > 0 {
@@ -313,7 +316,37 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if duration <= 0 {
 		duration = 5
 	}
-	return map[string]float64{"seconds": float64(duration)}
+	ratios["seconds"] = float64(duration)
+
+	resolution, hasVideoInput := zlhubBillingInputs(c, req)
+	if priceRatio, ok := taskcommon.Seedance2PriceRatio(info.OriginModelName, resolution, hasVideoInput); ok && priceRatio != 1 {
+		ratios["seedance_price"] = priceRatio
+	}
+
+	return ratios
+}
+
+func zlhubBillingInputs(c *gin.Context, req relaycommon.TaskSubmitReq) (resolution string, hasVideoInput bool) {
+	resolution = taskcommon.MetadataString(req.Metadata, "resolution")
+	hasVideoInput = taskcommon.HasVideoInMetadata(req.Metadata)
+
+	if rawBody, exists := c.Get(nativeRequestBodyKey); exists {
+		bodyBytes, ok := rawBody.([]byte)
+		if ok && len(bodyBytes) > 0 {
+			var nativeReq map[string]any
+			if err := common.Unmarshal(bodyBytes, &nativeReq); err == nil {
+				if v, ok := nativeReq["resolution"].(string); ok && strings.TrimSpace(v) != "" {
+					resolution = strings.TrimSpace(v)
+				}
+				hasVideoInput = hasVideoInput || taskcommon.HasVideoInContent(nativeReq["content"])
+			}
+		}
+	}
+
+	if resolution == "" {
+		resolution = strings.TrimSpace(req.Size)
+	}
+	return resolution, hasVideoInput
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -611,10 +644,15 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return &taskResult, nil
 }
 
-// AdjustBillingOnComplete 基于实际视频时长结算计费（按倍率模式）。
+// AdjustBillingOnComplete 在上游没有返回 token usage 时，基于实际视频时长兜底结算（按倍率模式）。
 // 按次计费（PerCallBilling）的任务不会走到这里，在 settleTaskBillingOnComplete 的第 0 步就跳过了。
+// 返回了 token usage 的任务优先走通用 token 重算，避免再乘一次 duration。
 // 返回 0 表示不做 adaptor 调整，由上层 decide 走 token 重算或保持预扣。
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if taskResult.TotalTokens > 0 || taskResult.CompletionTokens > 0 {
+		return 0
+	}
+
 	bc := task.PrivateData.BillingContext
 	if bc == nil {
 		return 0
@@ -658,10 +696,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	var qResp queryResponse
 	if err := common.Unmarshal(originTask.Data, &qResp); err == nil && qResp.Data != nil {
-		openAIVideo.SetMetadata("url", qResp.Data.Content.VideoURL)
-		if qResp.Data.Duration > 0 {
-			openAIVideo.SetMetadata("duration", fmt.Sprintf("%d", qResp.Data.Duration))
-		}
+		applyZLHubVideoResult(openAIVideo, qResp.Data)
 		if qResp.Data.Status == "failed" {
 			if errMap, ok := qResp.Data.Error.(map[string]interface{}); ok {
 				msg, _ := errMap["message"].(string)
@@ -677,6 +712,46 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 
 	return common.Marshal(openAIVideo)
+}
+
+func applyZLHubVideoResult(openAIVideo *dto.OpenAIVideo, data *taskData) {
+	if data == nil {
+		return
+	}
+	openAIVideo.SetMetadata("upstream_task_id", data.ID)
+	openAIVideo.SetMetadata("url", data.Content.VideoURL)
+	if data.Duration > 0 {
+		duration := strconv.Itoa(data.Duration)
+		openAIVideo.Seconds = duration
+		openAIVideo.SetMetadata("duration", duration)
+	}
+	if data.Ratio != "" {
+		openAIVideo.Size = data.Ratio
+		openAIVideo.SetMetadata("ratio", data.Ratio)
+	}
+	if data.Resolution != "" {
+		openAIVideo.SetMetadata("resolution", data.Resolution)
+	}
+	if data.FramesPerSecond > 0 {
+		openAIVideo.SetMetadata("framespersecond", data.FramesPerSecond)
+	}
+	if data.Seed != 0 {
+		openAIVideo.SetMetadata("seed", data.Seed)
+	}
+	openAIVideo.SetMetadata("generate_audio", data.GenerateAudio)
+	if data.Cost.TotalCost != "" || data.Cost.OutputCost != "" || data.Cost.InputCost != "" {
+		openAIVideo.SetMetadata("cost", data.Cost)
+	}
+	if data.Usage.CompletionTokens > 0 || data.Usage.TotalTokens > 0 {
+		totalTokens := data.Usage.TotalTokens
+		if totalTokens <= 0 {
+			totalTokens = data.Usage.CompletionTokens
+		}
+		openAIVideo.Usage = &dto.Usage{
+			CompletionTokens: data.Usage.CompletionTokens,
+			TotalTokens:      totalTokens,
+		}
+	}
 }
 
 // ============================

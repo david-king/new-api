@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -39,6 +40,20 @@ func TestConvertToRequestPayloadKeepsMetadataRatioPriority(t *testing.T) {
 	})
 
 	assert.Equal(t, "9:16", body.Ratio)
+}
+
+func TestConvertToRequestPayloadIncludesResolution(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	body := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2.0",
+		Prompt: "test prompt",
+		Metadata: map[string]interface{}{
+			"resolution": "1080p",
+		},
+	})
+
+	assert.Equal(t, "1080p", body.Resolution)
 }
 
 func TestExtractImageRolesUsesIndex(t *testing.T) {
@@ -82,6 +97,54 @@ func TestAdjustBillingOnCompleteUsesActualOverEstimatedDuration(t *testing.T) {
 	actualQuota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Duration: actualDuration})
 
 	assert.Equal(t, int(common.QuotaPerUnit*float64(actualDuration)), actualQuota)
+}
+
+func TestAdjustBillingOnCompleteDefersToTokenBilling(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelRatio: 1,
+				GroupRatio: 1,
+			},
+		},
+	}
+
+	actualQuota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Duration:         10,
+		CompletionTokens: 100,
+		TotalTokens:      100,
+	})
+
+	assert.Equal(t, 0, actualQuota)
+}
+
+func TestApplyZLHubVideoResultIncludesUsageAndCost(t *testing.T) {
+	video := dto.NewOpenAIVideo()
+	data := &taskData{
+		ID:              "cgt-test",
+		Duration:        6,
+		Ratio:           "21:9",
+		Resolution:      "720p",
+		FramesPerSecond: 24,
+		GenerateAudio:   true,
+	}
+	data.Content.VideoURL = "https://example.com/video.mp4"
+	data.Usage.CompletionTokens = 131137
+	data.Usage.TotalTokens = 131137
+	data.Cost.Currency = "CNY"
+	data.Cost.OutputCost = "6.0322966000"
+	data.Cost.TotalCost = "6.0322966000"
+
+	applyZLHubVideoResult(video, data)
+
+	require.NotNil(t, video.Usage)
+	assert.Equal(t, 131137, video.Usage.CompletionTokens)
+	assert.Equal(t, 131137, video.Usage.TotalTokens)
+	assert.Equal(t, "6", video.Seconds)
+	assert.Equal(t, "21:9", video.Size)
+	assert.Equal(t, "720p", video.Metadata["resolution"])
+	assert.NotNil(t, video.Metadata["cost"])
 }
 
 func TestNewAssetTrackIDIsLowerHex32(t *testing.T) {

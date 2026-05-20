@@ -132,47 +132,21 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling applies Seedance 2.0 token price modifiers by resolution and video input.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
-			return map[string]float64{"video_input": ratio}
-		}
+	resolution := taskcommon.MetadataString(req.Metadata, "resolution")
+	if resolution == "" {
+		resolution = req.Size
+	}
+	hasVideoInput := taskcommon.HasVideoInMetadata(req.Metadata)
+	if ratio, ok := taskcommon.Seedance2PriceRatio(info.OriginModelName, resolution, hasVideoInput); ok && ratio != 1 {
+		return map[string]float64{"seedance_price": ratio}
 	}
 	return nil
-}
-
-// hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
-// 避免构建完整的上游 requestPayload。
-func hasVideoInMetadata(metadata map[string]interface{}) bool {
-	if metadata == nil {
-		return false
-	}
-	contentRaw, ok := metadata["content"]
-	if !ok {
-		return false
-	}
-	contentSlice, ok := contentRaw.([]interface{})
-	if !ok {
-		return false
-	}
-	for _, item := range contentSlice {
-		itemMap, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if itemMap["type"] == "video_url" {
-			return true
-		}
-		if _, has := itemMap["video_url"]; has {
-			return true
-		}
-	}
-	return false
 }
 
 // BuildRequestBody converts request into Doubao specific format.
@@ -352,7 +326,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	applyDoubaoVideoResult(openAIVideo, &dResp)
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
@@ -365,4 +339,43 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 
 	return common.Marshal(openAIVideo)
+}
+
+func applyDoubaoVideoResult(openAIVideo *dto.OpenAIVideo, data *responseTask) {
+	if data == nil {
+		return
+	}
+	openAIVideo.SetMetadata("upstream_task_id", data.ID)
+	openAIVideo.SetMetadata("url", data.Content.VideoURL)
+	if data.Duration > 0 {
+		duration := strconv.Itoa(data.Duration)
+		openAIVideo.Seconds = duration
+		openAIVideo.SetMetadata("duration", duration)
+	}
+	if data.Ratio != "" {
+		openAIVideo.Size = data.Ratio
+		openAIVideo.SetMetadata("ratio", data.Ratio)
+	}
+	if data.Resolution != "" {
+		openAIVideo.SetMetadata("resolution", data.Resolution)
+	}
+	if data.FramesPerSecond > 0 {
+		openAIVideo.SetMetadata("framespersecond", data.FramesPerSecond)
+	}
+	if data.Seed != 0 {
+		openAIVideo.SetMetadata("seed", data.Seed)
+	}
+	if data.ServiceTier != "" {
+		openAIVideo.SetMetadata("service_tier", data.ServiceTier)
+	}
+	if data.Usage.CompletionTokens > 0 || data.Usage.TotalTokens > 0 {
+		totalTokens := data.Usage.TotalTokens
+		if totalTokens <= 0 {
+			totalTokens = data.Usage.CompletionTokens
+		}
+		openAIVideo.Usage = &dto.Usage{
+			CompletionTokens: data.Usage.CompletionTokens,
+			TotalTokens:      totalTokens,
+		}
+	}
 }

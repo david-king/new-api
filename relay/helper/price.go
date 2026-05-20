@@ -170,6 +170,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
 	var modelRatio float64
+	var completionRatio float64
 
 	if !success {
 		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
@@ -187,6 +188,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 			if !ratioSuccess && !acceptUnsetRatio {
 				return types.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
 			}
+			completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
 		}
 	}
 
@@ -214,12 +216,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	}
 
 	priceData := types.PriceData{
-		FreeModel:      freeModel,
-		ModelPrice:     modelPrice,
-		ModelRatio:     modelRatio,
-		UsePrice:       usePrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		FreeModel:       freeModel,
+		ModelPrice:      modelPrice,
+		ModelRatio:      modelRatio,
+		CompletionRatio: completionRatio,
+		UsePrice:        usePrice,
+		Quota:           quota,
+		GroupRatioInfo:  groupRatioInfo,
 	}
 	return priceData, nil
 }
