@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -101,6 +102,9 @@ type TaskPrivateData struct {
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	LastPollAt     int64  `json:"last_poll_at,omitempty"`     // 最近一次上游轮询时间戳，用于渠道级限频
+	CallbackURL    string `json:"callback_url,omitempty"`     // 用户提交的任务结果回调地址
+	CallbackStatus string `json:"callback_status,omitempty"`  // 最近一次成功通知用户的任务状态
+	CallbackAt     int64  `json:"callback_at,omitempty"`      // 最近一次成功通知用户的时间戳
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -330,6 +334,30 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
+func GetByUpstreamTaskId(upstreamTaskId string) (*Task, bool, error) {
+	upstreamTaskId = strings.TrimSpace(upstreamTaskId)
+	if upstreamTaskId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	pattern := "%\"upstream_task_id\":\"" + upstreamTaskId + "\"%"
+	query := DB.Where("task_id = ?", upstreamTaskId)
+	switch {
+	case common.UsingPostgreSQL:
+		query = query.Or("private_data::text LIKE ?", pattern)
+	case common.UsingMySQL:
+		query = query.Or("CAST(private_data AS CHAR) LIKE ?", pattern)
+	default:
+		query = query.Or("private_data LIKE ?", pattern)
+	}
+	err := query.Order("id desc").First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, err
+}
+
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
@@ -429,6 +457,23 @@ func (t *Task) UpdatePrivateDataWithStatus(fromStatus TaskStatus) (bool, error) 
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func MarkTaskCallbackNotified(taskID int64, status TaskStatus, callbackStatus string, callbackAt int64) error {
+	if taskID <= 0 || callbackStatus == "" {
+		return nil
+	}
+	var task Task
+	err := DB.Where("id = ? AND status = ?", taskID, status).First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil || !exist {
+		return err
+	}
+	task.PrivateData.CallbackStatus = callbackStatus
+	task.PrivateData.CallbackAt = callbackAt
+	return DB.Model(&Task{}).
+		Where("id = ? AND status = ?", taskID, status).
+		Update("private_data", task.PrivateData).Error
 }
 
 // TaskBulkUpdate performs an unconditional bulk UPDATE by upstream task_id strings.

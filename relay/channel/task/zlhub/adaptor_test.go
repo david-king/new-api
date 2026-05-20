@@ -1,13 +1,19 @@
 package zlhub
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +60,36 @@ func TestConvertToRequestPayloadIncludesResolution(t *testing.T) {
 	})
 
 	assert.Equal(t, "1080p", body.Resolution)
+}
+
+func TestBuildRequestBodyUsesInternalCallbackURL(t *testing.T) {
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://platform.example"
+	defer func() { system_setting.ServerAddress = oldServerAddress }()
+
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/task/create", nil)
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, relaycommon.TaskSubmitReq{
+		Model:       "doubao-seedance-2.0",
+		Prompt:      "test prompt",
+		CallbackURL: "https://user.example/callback",
+	})
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	bodyBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var out map[string]any
+	require.NoError(t, common.Unmarshal(bodyBytes, &out))
+	assert.Equal(t, "https://platform.example/api/task/callback/zlhub/video", out["callback_url"])
+	assert.NotEqual(t, "https://user.example/callback", out["callback_url"])
 }
 
 func TestExtractImageRolesUsesIndex(t *testing.T) {

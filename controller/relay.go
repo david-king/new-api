@@ -578,6 +578,9 @@ func RelayTask(c *gin.Context) {
 
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
+			task.PrivateData.CallbackURL = service.NormalizeTaskCallbackURL(taskReq.CallbackURL)
+		}
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId

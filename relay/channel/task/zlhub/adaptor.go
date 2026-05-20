@@ -178,6 +178,8 @@ const nativeRequestBodyKey = "zlhub_native_request_body"
 // nativeRequestModelKey 存储从原生请求体中提取的 model 名称
 const nativeRequestModelKey = "zlhub_native_request_model"
 
+const videoCallbackPath = "/api/task/callback/zlhub/video"
+
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	// 先尝试解析为 ZLHub 原生格式（包含 content 数组）
 	var rawBody []byte
@@ -232,6 +234,10 @@ func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.Relay
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required (add a text item in content array)"), "missing_prompt", http.StatusBadRequest)
 	}
 
+	if callbackURL, ok := nativeReq["callback_url"].(string); ok {
+		req.CallbackURL = strings.TrimSpace(callbackURL)
+	}
+
 	// 提取 duration
 	if dur, ok := nativeReq["duration"]; ok {
 		switch v := dur.(type) {
@@ -263,7 +269,7 @@ func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.Relay
 	metadata := make(map[string]interface{})
 	for k, v := range nativeReq {
 		switch k {
-		case "model", "content", "duration", "prompt":
+		case "model", "content", "duration", "prompt", "callback_url":
 			// 已提取，跳过
 		default:
 			metadata[k] = v
@@ -366,9 +372,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				info.UpstreamModelName = model.(string)
 			}
 
-			// 设置 callback_url
+			// 上游只接收平台内部回调地址；用户 callback_url 存在本地任务 private_data 中。
+			delete(nativeReq, "callback_url")
 			if serverAddr := system_setting.ServerAddress; serverAddr != "" {
-				nativeReq["callback_url"] = serverAddr + "/api/zlhub/callback/video"
+				nativeReq["callback_url"] = serverAddr + videoCallbackPath
 			}
 
 			data, err := common.Marshal(nativeReq)
@@ -392,9 +399,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		info.UpstreamModelName = body.Model
 	}
 
-	// 设置 callback_url
+	// 上游只接收平台内部回调地址；用户 callback_url 存在本地任务 private_data 中。
 	if serverAddr := system_setting.ServerAddress; serverAddr != "" {
-		body.CallbackURL = serverAddr + "/api/zlhub/callback/video"
+		body.CallbackURL = serverAddr + videoCallbackPath
 	}
 
 	data, err := common.Marshal(body)

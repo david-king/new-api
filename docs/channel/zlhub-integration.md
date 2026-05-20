@@ -320,7 +320,9 @@ curl -X POST http://your-server/api/zlhub/v1/task/cancel/cgt-20260421174743-w9q8
 
 ### 回调与轮询
 
-视频生成完成后，ZLHub 会回调 `{ServerAddress}/api/zlhub/callback/video`。`BuildRequestBody` 会自动注入 `callback_url`。
+视频生成完成后，ZLHub 会回调 `{ServerAddress}/api/task/callback/zlhub/video`。`BuildRequestBody` 会自动注入 `callback_url`。
+
+兼容说明：旧地址 `{ServerAddress}/api/zlhub/callback/video` 仍保留为回调入口，避免已提交到上游的历史任务回调丢失。
 
 当前回调端点仅记录日志，**不触发任务状态更新**。任务状态更新完全依赖后台轮询系统：
 

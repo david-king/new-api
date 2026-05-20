@@ -459,9 +459,19 @@ func AssetReviewCallback(c *gin.Context) {
 func ZLHubVideoCallback(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": "success"})
+		c.JSON(http.StatusBadRequest, gin.H{"code": "error", "message": "read callback body failed"})
 		return
 	}
 	common.SysLog(fmt.Sprintf("ZLHub video callback: %s", string(body)))
-	c.JSON(http.StatusOK, gin.H{"code": "success"})
+	task, err := service.HandleVideoTaskCallback(
+		c.Request.Context(),
+		constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZLHub)),
+		body,
+	)
+	if err != nil {
+		common.SysError(fmt.Sprintf("ZLHub video callback handle error: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "error", "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": "success", "task_id": task.TaskID})
 }

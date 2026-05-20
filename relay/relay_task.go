@@ -377,6 +377,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/v1/task/get/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -401,6 +402,18 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+		return
+	}
+
+	if isTaskAPI {
+		respBody, err = common.Marshal(dto.TaskResponse[any]{
+			Code:    "success",
+			Message: "",
+			Data:    service.VideoTaskResultFromTask(originTask),
+		})
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -539,7 +552,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
-	usage, cost := taskUsageAndCost(task.Data)
+	usage, cost := service.TaskUsageAndCost(task.Data)
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -563,57 +576,5 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Usage:      usage,
 		Cost:       cost,
 		Data:       task.Data,
-	}
-}
-
-func taskUsageAndCost(data []byte) (*dto.Usage, any) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	var root map[string]any
-	if err := common.Unmarshal(data, &root); err != nil {
-		return nil, nil
-	}
-	payload := root
-	if nested, ok := root["data"].(map[string]any); ok {
-		payload = nested
-	}
-
-	usageMap, _ := payload["usage"].(map[string]any)
-	usage := taskUsageFromMap(usageMap)
-	return usage, payload["cost"]
-}
-
-func taskUsageFromMap(usageMap map[string]any) *dto.Usage {
-	if len(usageMap) == 0 {
-		return nil
-	}
-	completionTokens := taskIntFromAny(usageMap["completion_tokens"])
-	totalTokens := taskIntFromAny(usageMap["total_tokens"])
-	if totalTokens <= 0 {
-		totalTokens = completionTokens
-	}
-	if completionTokens <= 0 && totalTokens <= 0 {
-		return nil
-	}
-	return &dto.Usage{
-		CompletionTokens: completionTokens,
-		TotalTokens:      totalTokens,
-	}
-}
-
-func taskIntFromAny(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	case string:
-		i, _ := strconv.Atoi(n)
-		return i
-	default:
-		return 0
 	}
 }

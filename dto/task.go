@@ -54,6 +54,31 @@ type TaskDto struct {
 	Data       json.RawMessage `json:"data"`
 }
 
+type VideoTaskContentDto struct {
+	VideoURL string `json:"video_url,omitempty"`
+}
+
+type VideoTaskResultDto struct {
+	ID                    string               `json:"id"`
+	TaskID                string               `json:"task_id,omitempty"`
+	UpstreamID            string               `json:"upstream_id,omitempty"`
+	Model                 string               `json:"model,omitempty"`
+	Status                string               `json:"status"`
+	Content               *VideoTaskContentDto `json:"content,omitempty"`
+	Usage                 *Usage               `json:"usage,omitempty"`
+	CreatedAt             int64                `json:"created_at,omitempty"`
+	UpdatedAt             int64                `json:"updated_at,omitempty"`
+	Seed                  int                  `json:"seed,omitempty"`
+	Resolution            string               `json:"resolution,omitempty"`
+	Ratio                 string               `json:"ratio,omitempty"`
+	Duration              int                  `json:"duration,omitempty"`
+	FramesPerSecond       int                  `json:"framespersecond,omitempty"`
+	ServiceTier           string               `json:"service_tier,omitempty"`
+	ExecutionExpiresAfter int                  `json:"execution_expires_after,omitempty"`
+	GenerateAudio         *bool                `json:"generate_audio,omitempty"`
+	Draft                 *bool                `json:"draft,omitempty"`
+}
+
 type FetchReq struct {
 	IDs []string `json:"ids"`
 }

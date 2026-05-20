@@ -28,6 +28,13 @@ func SetZLHubRouter(router *gin.Engine) {
 	zlhubCallbackRouter.Use(middleware.RouteTag("zlhub"))
 	{
 		zlhubCallbackRouter.POST("/asset/callback", controller.AssetReviewCallback)
+		// 兼容已提交到上游的旧回调地址。
 		zlhubCallbackRouter.POST("/callback/video", controller.ZLHubVideoCallback)
+	}
+
+	taskCallbackRouter := router.Group("/api/task/callback")
+	taskCallbackRouter.Use(middleware.RouteTag("task_callback"))
+	{
+		taskCallbackRouter.POST("/zlhub/video", controller.ZLHubVideoCallback)
 	}
 }
