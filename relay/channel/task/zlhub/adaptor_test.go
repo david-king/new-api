@@ -1,6 +1,7 @@
 package zlhub
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -105,6 +107,31 @@ func TestBuildRequestHeaderPassesTraceID(t *testing.T) {
 
 	assert.Equal(t, "Bearer video-key", req.Header.Get("Authorization"))
 	assert.Equal(t, "trace-123", req.Header.Get("X-Trace-ID"))
+}
+
+func TestFetchTaskReturnsErrorForNon2xx(t *testing.T) {
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/task/get/cgt-error", r.URL.Path)
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	resp, err := adaptor.FetchTask(server.URL, "video-key|asset-token", map[string]any{"task_id": "cgt-error"}, "")
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "status 401")
+}
+
+func TestParseTaskResultRejectsUnrecognizedEmptyData(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	result, err := adaptor.ParseTaskResult([]byte(`{"error":{"message":"unauthorized"}}`))
+
+	require.Error(t, err)
+	assert.Nil(t, result)
 }
 
 func TestEstimateBillingUsesOfficialVideoTokenEstimate(t *testing.T) {
@@ -289,6 +316,75 @@ func TestParseNativeRequestAllowsMediaOnlyContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, req.Prompt)
 	assert.Equal(t, []string{"https://example.com/ref.jpg"}, req.Images)
+	assert.Equal(t, constant.TaskActionGenerate, info.Action)
+}
+
+func TestParseNativeRequestStoresTextGenerateForTextOnlyContent(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	rawBody := []byte(`{
+		"model": "doubao-seedance-2.0",
+		"content": [
+			{"type": "text", "text": "生成一段城市夜景视频"}
+		],
+		"duration": 5
+	}`)
+	var nativeReq map[string]any
+	require.NoError(t, common.Unmarshal(rawBody, &nativeReq))
+
+	taskErr := adaptor.parseNativeRequest(c, info, nativeReq, rawBody)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "生成一段城市夜景视频", req.Prompt)
+	assert.Empty(t, req.Images)
+	assert.Equal(t, constant.TaskActionTextGenerate, info.Action)
+}
+
+func TestValidateRequestAndSetActionStoresTextGenerateForPromptOnly(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/task/create", bytes.NewReader([]byte(`{
+		"model": "doubao-seedance-2.0",
+		"prompt": "生成一段城市夜景视频",
+		"duration": 5
+	}`)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "生成一段城市夜景视频", req.Prompt)
+	assert.Equal(t, constant.TaskActionTextGenerate, info.Action)
+}
+
+func TestValidateRequestAndSetActionStoresGenerateForImageInput(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/task/create", bytes.NewReader([]byte(`{
+		"model": "doubao-seedance-2.0",
+		"prompt": "让图片动起来",
+		"image": "https://example.com/ref.jpg",
+		"duration": 5
+	}`)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://example.com/ref.jpg"}, req.Images)
+	assert.Equal(t, constant.TaskActionGenerate, info.Action)
 }
 
 func TestExtractImageRolesUsesIndex(t *testing.T) {

@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -84,6 +86,30 @@ func TestVideoTaskResultResponseBodyIsSanitized(t *testing.T) {
 	assert.NotContains(t, data, "data")
 	assert.NotContains(t, data, "cost")
 	assert.NotContains(t, data, "extra")
+}
+
+func TestApplyVideoTaskResultPersistsUpstreamTaskIDWhenMissing(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	task := &model.Task{
+		TaskID:   "task_public",
+		UserId:   1,
+		Status:   model.TaskStatusQueued,
+		Progress: "10%",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := ApplyVideoTaskResult(ctx, &mockAdaptor{}, task, []byte(`{"id":"cgt-callback","status":"running"}`), &relaycommon.TaskInfo{
+		TaskID:   "cgt-callback",
+		Status:   string(model.TaskStatusInProgress),
+		Progress: "50%",
+	})
+	require.NoError(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, "cgt-callback", reloaded.PrivateData.UpstreamTaskID)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
 }
 
 func TestNormalizeTaskCallbackURL(t *testing.T) {

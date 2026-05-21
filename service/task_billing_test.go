@@ -624,6 +624,55 @@ func TestShouldThrottleZLHubVideoPoll(t *testing.T) {
 	assert.False(t, shouldThrottleZLHubVideoPoll(doubaoChannel, task, 159))
 }
 
+func TestShouldSkipVideoTaskPollForZLHub(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	ch := &model.Channel{Type: constant.ChannelTypeZLHub}
+
+	task := &model.Task{
+		TaskID:    "task_zlhub_poll",
+		UserId:    1,
+		ChannelId: 1,
+		Status:    model.TaskStatusNotStart,
+		Progress:  "0%",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	assert.False(t, shouldSkipVideoTaskPoll(ctx, ch, task, 100))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, int64(100), reloaded.PrivateData.LastPollAt)
+
+	assert.True(t, shouldSkipVideoTaskPoll(ctx, ch, &reloaded, 159))
+	assert.False(t, shouldSkipVideoTaskPoll(ctx, ch, &reloaded, 160))
+}
+
+func TestApplyVideoTaskResultDoesNotRegressTerminalStatus(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	task := &model.Task{
+		TaskID:    "task_terminal",
+		UserId:    1,
+		ChannelId: 1,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		Data:      json.RawMessage(`{"data":{"status":"succeeded"}}`),
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := ApplyVideoTaskResult(ctx, &mockAdaptor{}, task, []byte(`{"data":{"status":"running"}}`), &relaycommon.TaskInfo{
+		Status:   string(model.TaskStatusInProgress),
+		Progress: "50%",
+	})
+	require.NoError(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+}
+
 // ===========================================================================
 // Mock adaptor for settleTaskBillingOnComplete tests
 // ===========================================================================

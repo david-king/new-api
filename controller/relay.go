@@ -577,6 +577,7 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
+		applyTaskSubmitInitialStatus(task, result.Platform)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
 			task.PrivateData.CallbackURL = service.NormalizeTaskCallbackURL(taskReq.CallbackURL)
@@ -603,6 +604,16 @@ func RelayTask(c *gin.Context) {
 
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
+	}
+}
+
+func applyTaskSubmitInitialStatus(task *model.Task, platform constant.TaskPlatform) {
+	if task == nil {
+		return
+	}
+	if platform == constant.TaskPlatform(fmt.Sprint(constant.ChannelTypeZLHub)) {
+		task.Status = model.TaskStatusQueued
+		task.Progress = "10%"
 	}
 }
 

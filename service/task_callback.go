@@ -123,6 +123,9 @@ func ApplyVideoTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if len(responseBody) > 0 {
 		task.Data = redactVideoResponseBody(responseBody)
 	}
+	if task.PrivateData.UpstreamTaskID == "" && taskResult.TaskID != "" && taskResult.TaskID != task.TaskID {
+		task.PrivateData.UpstreamTaskID = taskResult.TaskID
+	}
 
 	if taskResult.Status == "" {
 		errorResult := &dto.GeneralErrorResponse{}
@@ -140,12 +143,18 @@ func ApplyVideoTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task 
 		}
 	}
 
+	incomingStatus := model.TaskStatus(taskResult.Status)
+	if isTerminalTaskStatus(snap.Status) && incomingStatus != snap.Status {
+		logger.LogWarn(ctx, fmt.Sprintf("Ignore task %s status transition from terminal %s to %s", task.TaskID, snap.Status, incomingStatus))
+		return nil
+	}
+
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
 	now := time.Now().Unix()
 
-	task.Status = model.TaskStatus(taskResult.Status)
+	task.Status = incomingStatus
 	switch task.Status {
 	case model.TaskStatusSubmitted:
 		task.Progress = taskcommon.ProgressSubmitted
@@ -227,6 +236,10 @@ func ApplyVideoTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task 
 		NotifyTaskCallbackIfNeeded(ctx, task)
 	}
 	return nil
+}
+
+func isTerminalTaskStatus(status model.TaskStatus) bool {
+	return status == model.TaskStatusSuccess || status == model.TaskStatusFailure
 }
 
 func HandleVideoTaskCallback(ctx context.Context, platform constant.TaskPlatform, responseBody []byte) (*model.Task, error) {

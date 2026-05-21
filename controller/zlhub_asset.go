@@ -153,8 +153,11 @@ func CancelZLHubTask(c *gin.Context) {
 		})
 		return
 	}
-	if won && task.Quota != 0 {
-		service.RefundTaskQuota(c.Request.Context(), task, task.FailReason)
+	if won {
+		if task.Quota != 0 {
+			service.RefundTaskQuota(c.Request.Context(), task, task.FailReason)
+		}
+		service.NotifyTaskCallbackIfNeeded(c.Request.Context(), task)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -205,10 +208,19 @@ func proxyVideoRequest(c *gin.Context, upstreamPath string) {
 
 	var httpReq *http.Request
 	if len(reqBody) > 0 {
-		httpReq, _ = http.NewRequest(c.Request.Method, upstreamURL, bytes.NewReader(reqBody))
-		httpReq.ContentLength = int64(len(reqBody))
+		httpReq, err = http.NewRequest(c.Request.Method, upstreamURL, bytes.NewReader(reqBody))
 	} else {
-		httpReq, _ = http.NewRequest(c.Request.Method, upstreamURL, nil)
+		httpReq, err = http.NewRequest(c.Request.Method, upstreamURL, nil)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "error",
+			"message": "创建上游请求失败: " + err.Error(),
+		})
+		return
+	}
+	if len(reqBody) > 0 {
+		httpReq.ContentLength = int64(len(reqBody))
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")

@@ -23,7 +23,7 @@ ZLHub 视频生成走标准 relay 任务链路，会创建本地 `Task`，参与
 | ZLHub 路由 | `router/zlhub_router.go` | `/api/zlhub/*` 透传和回调路由 |
 | 视频 adaptor | `relay/channel/task/zlhub/adaptor.go` | 请求校验、请求体转换、上游调用、任务结果解析、取消任务、素材审核客户端 |
 | 任务 DTO | `dto/task.go` | 统一视频任务查询/回调响应 DTO |
-| 任务查询 | `relay/relay_task.go` | `/v1/task/get/{task_id}` 查询本地任务并返回统一结果 |
+| 任务查询 | `relay/relay_task.go` | `/v1/task/get/{task_id}` 使用本地任务定位上游 ID，实时刷新后返回统一结果 |
 | 视频回调 | `service/task_callback.go` | 处理上游回调、生成下游查询/回调响应、推送用户 callback_url |
 | 任务轮询 | `service/task_polling.go` | 后台轮询、ZLHub 60 秒节流、完成结算入口 |
 | 任务计费 | `service/task_billing.go` | token 重算、差额结算、失败退款 |
@@ -227,7 +227,7 @@ ZLHub 上游创建响应只要求能解析到 `id`。new-api 返回给 `/v1/task
 
 ## 7. 查询和返回字段
 
-`GET /v1/task/get/{task_id}` 使用本地任务 ID 查询。非 OpenAI Video 路由走 `service.VideoTaskResultFromTask`，返回统一任务响应包：
+`GET /v1/task/get/{task_id}` 使用本地任务 ID 查询。平台先用本地任务定位 `Task.PrivateData.UpstreamTaskID`，实时请求 ZLHub `/v1/task/get/{upstream_id}` 并通过 `service.ApplyVideoTaskResult` 写回任务状态、结果和计费终态；如果上游查询失败，则回退返回本地缓存。非 OpenAI Video 路由走 `service.VideoTaskResultFromTask`，返回统一任务响应包：
 
 ```json
 {
@@ -403,7 +403,7 @@ TaskPollingLoop
 | 超时控制 | `TaskTimeoutMinutes` |
 | 终态处理 | 成功结算，失败/取消/超时退款 |
 
-ZLHub 60 秒节流只限制对上游的实际查询，不影响用户查询本地任务状态。
+ZLHub 60 秒节流只限制后台轮询，不限制用户主动调用 `/v1/task/get/{task_id}` 时的实时上游查询。
 
 ## 11. 取消任务
 

@@ -237,8 +237,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 	}
 
-	// 标准格式：走原有 ValidateBasicTaskRequest 逻辑
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	// 标准格式：先复用基础校验，再按是否存在媒体输入修正 action，避免纯文本视频日志显示成图生视频。
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	if req, err := relaycommon.GetTaskRequest(c); err == nil {
+		relaycommon.StoreTaskRequest(c, info, zlhubTaskAction(req, false), req)
+	}
+	return nil
 }
 
 // parseNativeRequest 从 ZLHub 原生格式请求中提取计费信息，构造 TaskSubmitReq
@@ -321,8 +327,53 @@ func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.Relay
 	c.Set(nativeRequestBodyKey, rawBody)
 	c.Set(nativeRequestModelKey, req.Model)
 
-	relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, req)
+	relaycommon.StoreTaskRequest(c, info, zlhubTaskAction(req, hasNonTextContent), req)
 	return nil
+}
+
+func zlhubTaskAction(req relaycommon.TaskSubmitReq, hasNativeMedia bool) string {
+	if hasNativeMedia ||
+		req.HasImage() ||
+		strings.TrimSpace(req.Image) != "" ||
+		strings.TrimSpace(req.InputReference) != "" ||
+		zlhubMetadataHasMediaInput(req.Metadata) {
+		return constant.TaskActionGenerate
+	}
+	return constant.TaskActionTextGenerate
+}
+
+func zlhubMetadataHasMediaInput(metadata map[string]interface{}) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	if taskcommon.HasVideoInMetadata(metadata) {
+		return true
+	}
+	for _, key := range []string{"image_url", "video_url", "audio_url"} {
+		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	contentItems, ok := metadata["content"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, item := range contentItems {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		itemType, _ := itemMap["type"].(string)
+		if itemType != "" && itemType != "text" {
+			return true
+		}
+		for _, key := range []string{"image_url", "video_url", "audio_url", "draft_task"} {
+			if _, ok := itemMap[key]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -659,7 +710,16 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("zlhub task query status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return resp, nil
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -848,6 +908,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	if qResp.Data == nil {
+		if qResp.Code == "" {
+			return nil, fmt.Errorf("zlhub task query missing data")
+		}
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = "30%"
 		return &taskResult, nil
@@ -1033,6 +1096,9 @@ func (a *TaskAdaptor) SubmitAssetReview(req *AssetUploadRequest, proxy string) (
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("zlhub asset upload sync status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 
 	var result AssetUploadSyncResponse
 	if err := common.Unmarshal(respBody, &result); err != nil {
@@ -1069,6 +1135,9 @@ func (a *TaskAdaptor) SubmitAssetReviewAsync(req *AssetUploadRequest, proxy stri
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("zlhub asset upload async status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 
 	var result AssetUploadAsyncResponse
 	if err := common.Unmarshal(respBody, &result); err != nil {
@@ -1101,6 +1170,9 @@ func (a *TaskAdaptor) QueryAssetTask(taskID string, proxy string) (*AssetTaskQue
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("zlhub asset task query status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var result AssetTaskQueryResponse
@@ -1146,6 +1218,9 @@ func (a *TaskAdaptor) CancelTask(taskID string, proxy string) (*CancelTaskRespon
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("zlhub task cancel status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var result CancelTaskResponse

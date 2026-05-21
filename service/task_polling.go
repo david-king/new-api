@@ -401,26 +401,24 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 }
 
 func shouldSkipVideoTaskPoll(ctx context.Context, ch *model.Channel, task *model.Task, now int64) bool {
-	if !shouldThrottleZLHubVideoPoll(ch, task, now) {
-		if ch == nil || ch.Type != constant.ChannelTypeZLHub || task == nil {
-			return false
-		}
-		task.PrivateData.LastPollAt = now
-		won, err := task.UpdatePrivateDataWithStatus(task.Status)
-		if err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("Failed to persist ZLHub task poll timestamp %s: %s", task.TaskID, err.Error()))
-			return false
-		}
-		if !won {
-			logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling because status changed before poll", task.TaskID))
-			return true
-		}
-	} else {
-		// No changes, skip update
-		logger.LogDebug(ctx, "No update needed for task %s", task.TaskID)
+	if shouldThrottleZLHubVideoPoll(ch, task, now) {
+		logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling: last poll was %d seconds ago", task.TaskID, now-task.PrivateData.LastPollAt))
+		return true
 	}
-	logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling: last poll was %d seconds ago", task.TaskID, now-task.PrivateData.LastPollAt))
-	return true
+	if ch == nil || ch.Type != constant.ChannelTypeZLHub || task == nil {
+		return false
+	}
+	task.PrivateData.LastPollAt = now
+	won, err := task.UpdatePrivateDataWithStatus(task.Status)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("Failed to persist ZLHub task poll timestamp %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	if !won {
+		logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling because status changed before poll", task.TaskID))
+		return true
+	}
+	return false
 }
 
 func shouldThrottleZLHubVideoPoll(ch *model.Channel, task *model.Task, now int64) bool {

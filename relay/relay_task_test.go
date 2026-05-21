@@ -1,15 +1,21 @@
 package relay
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestVideoTaskResultFromTaskSanitizesStoredData(t *testing.T) {
@@ -111,4 +117,178 @@ func TestVideoTaskResultFromTaskSanitizesStoredData(t *testing.T) {
 	assert.Equal(t, "cgt-2025-test", data["upstream_id"])
 	assert.NotContains(t, data, "data")
 	assert.NotContains(t, data, "cost")
+}
+
+func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldRedisEnabled := common.RedisEnabled
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.RedisEnabled = oldRedisEnabled
+	})
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
+	model.DB = db
+	model.LOG_DB = db
+	common.MemoryCacheEnabled = false
+	common.RedisEnabled = false
+	service.InitHttpClient()
+	return db
+}
+
+func TestTryRealtimeFetchZLHubTaskAPIRefreshesFromUpstream(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	var upstreamCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		assert.Equal(t, "/v1/task/get/cgt-test", r.URL.Path)
+		assert.Equal(t, "Bearer video-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"code": "success",
+			"message": "",
+			"data": {
+				"id": "cgt-test",
+				"model": "doubao-seedance-2.0",
+				"status": "running",
+				"content": {},
+				"created_at": 1779358566,
+				"updated_at": 1779359051
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	channel := &model.Channel{
+		Id:      1,
+		Type:    constant.ChannelTypeZLHub,
+		Key:     "video-key|asset-token",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	task := &model.Task{
+		TaskID:    "task_public",
+		Platform:  constant.TaskPlatform("58"),
+		UserId:    1,
+		ChannelId: 1,
+		Status:    model.TaskStatusNotStart,
+		Progress:  "0%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "cgt-test",
+		},
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2.0",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/task/get/task_public", nil)
+
+	respBody := tryRealtimeFetch(c, task, false, true)
+	require.NotEmpty(t, respBody)
+	assert.True(t, upstreamCalled)
+
+	var resp dto.TaskResponse[map[string]any]
+	require.NoError(t, common.Unmarshal(respBody, &resp))
+	require.True(t, resp.IsSuccess())
+	assert.Equal(t, "task_public", resp.Data["task_id"])
+	assert.Equal(t, "cgt-test", resp.Data["upstream_id"])
+	assert.Equal(t, "running", resp.Data["status"])
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
+	assert.Equal(t, "50%", reloaded.Progress)
+}
+
+func TestRelayTaskFetchZLHubTaskAPIRefreshesFromUpstream(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	var upstreamCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		assert.Equal(t, "/v1/task/get/cgt-entry", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"code": "success",
+			"message": "",
+			"data": {
+				"id": "cgt-entry",
+				"model": "doubao-seedance-2.0",
+				"status": "succeeded",
+				"content": {
+					"video_url": "https://example.com/video.mp4"
+				},
+				"usage": {
+					"completion_tokens": 108900,
+					"total_tokens": 108900
+				},
+				"created_at": 1779358566,
+				"updated_at": 1779359051
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      1,
+		Type:    constant.ChannelTypeZLHub,
+		Key:     "video-key|asset-token",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_entry",
+		Platform:  constant.TaskPlatform("58"),
+		UserId:    7,
+		ChannelId: 1,
+		Status:    model.TaskStatusQueued,
+		Progress:  "10%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "cgt-entry",
+		},
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2.0",
+		},
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("id", 7)
+	c.Params = gin.Params{{Key: "task_id", Value: "task_entry"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/task/get/task_entry", nil)
+
+	taskErr := RelayTaskFetch(c, relayconstant.RelayModeVideoFetchByID)
+	require.Nil(t, taskErr)
+	assert.True(t, upstreamCalled)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp dto.TaskResponse[map[string]any]
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(t, resp.IsSuccess())
+	assert.Equal(t, "task_entry", resp.Data["task_id"])
+	assert.Equal(t, "cgt-entry", resp.Data["upstream_id"])
+	assert.Equal(t, "succeeded", resp.Data["status"])
+	content, ok := resp.Data["content"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://example.com/video.mp4", content["video_url"])
+
+	var reloaded model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_entry").First(&reloaded).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
 }

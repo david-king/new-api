@@ -126,10 +126,45 @@ type TaskBillingContext struct {
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
 // 旧数据没有 UpstreamTaskID 时，TaskID 本身就是上游 ID
 func (t *Task) GetUpstreamTaskID() string {
+	if t == nil {
+		return ""
+	}
 	if t.PrivateData.UpstreamTaskID != "" {
 		return t.PrivateData.UpstreamTaskID
 	}
+	if upstreamTaskID := extractUpstreamTaskIDFromData(t.Data); upstreamTaskID != "" {
+		return upstreamTaskID
+	}
 	return t.TaskID
+}
+
+func extractUpstreamTaskIDFromData(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	root := map[string]any{}
+	if err := common.Unmarshal(data, &root); err != nil {
+		return ""
+	}
+	keys := []string{"upstream_task_id", "upstream_id", "id", "task_id"}
+	if nested, ok := root["data"].(map[string]any); ok {
+		if value := firstStringFromMap(nested, keys...); value != "" {
+			return value
+		}
+	}
+	return firstStringFromMap(root, keys...)
+}
+
+func firstStringFromMap(m map[string]any, keys ...string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if value, ok := m[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // GetResultURL 获取任务结果 URL（视频地址等）
@@ -340,15 +375,14 @@ func GetByUpstreamTaskId(upstreamTaskId string) (*Task, bool, error) {
 		return nil, false, nil
 	}
 	var task *Task
-	pattern := "%\"upstream_task_id\":\"" + upstreamTaskId + "\"%"
 	query := DB.Where("task_id = ?", upstreamTaskId)
-	switch {
-	case common.UsingPostgreSQL:
-		query = query.Or("private_data::text LIKE ?", pattern)
-	case common.UsingMySQL:
-		query = query.Or("CAST(private_data AS CHAR) LIKE ?", pattern)
-	default:
-		query = query.Or("private_data LIKE ?", pattern)
+	privateDataCondition := jsonLikeCondition("private_data")
+	for _, pattern := range jsonStringFieldPatterns(upstreamTaskId, "upstream_task_id", "upstream_id") {
+		query = query.Or(privateDataCondition, pattern)
+	}
+	dataCondition := jsonLikeCondition("data")
+	for _, pattern := range jsonStringFieldPatterns(upstreamTaskId, "id", "task_id", "upstream_id", "upstream_task_id") {
+		query = query.Or(dataCondition, pattern)
 	}
 	err := query.Order("id desc").First(&task).Error
 	exist, err := RecordExist(err)
@@ -356,6 +390,33 @@ func GetByUpstreamTaskId(upstreamTaskId string) (*Task, bool, error) {
 		return nil, false, err
 	}
 	return task, exist, err
+}
+
+func jsonStringFieldPatterns(value string, fields ...string) []string {
+	escapedValue := escapeLikeLiteral(value)
+	patterns := make([]string, 0, len(fields))
+	for _, field := range fields {
+		patterns = append(patterns, "%\""+field+"\":\""+escapedValue+"\"%")
+	}
+	return patterns
+}
+
+func escapeLikeLiteral(value string) string {
+	value = strings.ReplaceAll(value, "!", "!!")
+	value = strings.ReplaceAll(value, "%", "!%")
+	value = strings.ReplaceAll(value, "_", "!_")
+	return value
+}
+
+func jsonLikeCondition(column string) string {
+	switch {
+	case common.UsingPostgreSQL:
+		return column + "::text LIKE ? ESCAPE '!'"
+	case common.UsingMySQL:
+		return "CAST(" + column + " AS CHAR) LIKE ? ESCAPE '!'"
+	default:
+		return "CAST(" + column + " AS TEXT) LIKE ? ESCAPE '!'"
+	}
 }
 
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
@@ -394,14 +455,15 @@ func (Task *Task) Insert() error {
 }
 
 type taskSnapshot struct {
-	Status     TaskStatus
-	Progress   string
-	StartTime  int64
-	FinishTime int64
-	FailReason string
-	ResultURL  string
-	LastPollAt int64
-	Data       json.RawMessage
+	Status         TaskStatus
+	Progress       string
+	StartTime      int64
+	FinishTime     int64
+	FailReason     string
+	UpstreamTaskID string
+	ResultURL      string
+	LastPollAt     int64
+	Data           json.RawMessage
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
@@ -410,6 +472,7 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.StartTime == other.StartTime &&
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
+		s.UpstreamTaskID == other.UpstreamTaskID &&
 		s.ResultURL == other.ResultURL &&
 		s.LastPollAt == other.LastPollAt &&
 		bytes.Equal(s.Data, other.Data)
@@ -417,14 +480,15 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 
 func (t *Task) Snapshot() taskSnapshot {
 	return taskSnapshot{
-		Status:     t.Status,
-		Progress:   t.Progress,
-		StartTime:  t.StartTime,
-		FinishTime: t.FinishTime,
-		FailReason: t.FailReason,
-		ResultURL:  t.PrivateData.ResultURL,
-		LastPollAt: t.PrivateData.LastPollAt,
-		Data:       t.Data,
+		Status:         t.Status,
+		Progress:       t.Progress,
+		StartTime:      t.StartTime,
+		FinishTime:     t.FinishTime,
+		FailReason:     t.FailReason,
+		UpstreamTaskID: t.PrivateData.UpstreamTaskID,
+		ResultURL:      t.PrivateData.ResultURL,
+		LastPollAt:     t.PrivateData.LastPollAt,
+		Data:           t.Data,
 	}
 }
 
