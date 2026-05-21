@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -39,10 +41,24 @@ func TestConvertToRequestPayloadKeepsMetadataRatioPriority(t *testing.T) {
 	body := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:  "doubao-seedance-2.0",
 		Prompt: "test prompt",
+		Ratio:  "1:1",
 		Size:   "16:9",
 		Metadata: map[string]interface{}{
 			"ratio": "9:16",
 		},
+	})
+
+	assert.Equal(t, "9:16", body.Ratio)
+}
+
+func TestConvertToRequestPayloadUsesTopLevelRatio(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	body := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2.0",
+		Prompt: "test prompt",
+		Ratio:  "9:16",
+		Size:   "16:9",
 	})
 
 	assert.Equal(t, "9:16", body.Ratio)
@@ -60,6 +76,130 @@ func TestConvertToRequestPayloadIncludesResolution(t *testing.T) {
 	})
 
 	assert.Equal(t, "1080p", body.Resolution)
+}
+
+func TestZLHubBillingInputsUsesTopLevelResolution(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	resolution, ratio, hasVideoInput := zlhubBillingInputs(c, relaycommon.TaskSubmitReq{
+		Resolution: "1080p",
+		Ratio:      "21:9",
+		Size:       "720p",
+	})
+
+	assert.Equal(t, "1080p", resolution)
+	assert.Equal(t, "21:9", ratio)
+	assert.False(t, hasVideoInput)
+}
+
+func TestBuildRequestHeaderPassesTraceID(t *testing.T) {
+	adaptor := &TaskAdaptor{apiKey: "video-key"}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/task/create", nil)
+	c.Request.Header.Set("X-Trace-ID", "trace-123")
+	req := httptest.NewRequest(http.MethodPost, "https://api.zlhub.cn/v1/task/create", nil)
+
+	require.NoError(t, adaptor.BuildRequestHeader(c, req, &relaycommon.RelayInfo{}))
+
+	assert.Equal(t, "Bearer video-key", req.Header.Get("Authorization"))
+	assert.Equal(t, "trace-123", req.Header.Get("X-Trace-ID"))
+}
+
+func TestEstimateBillingUsesOfficialVideoTokenEstimate(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2.0",
+		PriceData: types.PriceData{
+			ModelRatio: 3.6665,
+			UsePrice:   false,
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, relaycommon.TaskSubmitReq{
+		Model:      "doubao-seedance-2.0",
+		Prompt:     "test prompt",
+		Duration:   6,
+		Ratio:      "21:9",
+		Resolution: "720p",
+	})
+
+	ratios := adaptor.EstimateBilling(c, info)
+
+	require.Contains(t, ratios, "estimated_tokens")
+	expectedTokens := float64(1470*630*6*24) / 1024
+	assert.InDelta(t, 2*expectedTokens/common.QuotaPerUnit, ratios["estimated_tokens"], 0.000001)
+	assert.NotContains(t, ratios, "seconds")
+}
+
+func TestConvertToRequestPayloadPassesOfficialOptionalParams(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	returnLastFrame := dto.BoolValue(true)
+	generateAudio := dto.BoolValue(true)
+	draft := dto.BoolValue(false)
+	watermark := dto.BoolValue(false)
+	cameraFixed := dto.BoolValue(false)
+	frames := dto.IntValue(57)
+	expiresAfter := dto.IntValue(3600)
+	seed := dto.IntValue(123)
+
+	body := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:                 "doubao-seedance-2.0",
+		Prompt:                "test prompt",
+		Resolution:            "720p",
+		Ratio:                 "21:9",
+		Duration:              6,
+		Frames:                &frames,
+		ReturnLastFrame:       &returnLastFrame,
+		ServiceTier:           "default",
+		ExecutionExpiresAfter: &expiresAfter,
+		GenerateAudio:         &generateAudio,
+		Draft:                 &draft,
+		Watermark:             &watermark,
+		Seed:                  &seed,
+		CameraFixed:           &cameraFixed,
+		Tools: []any{
+			map[string]any{"type": "web_search"},
+		},
+		SafetyIdentifier: "user-hash",
+		Metadata: map[string]any{
+			"content": []any{
+				map[string]any{
+					"type":       "draft_task",
+					"draft_task": map[string]any{"id": "cgt-draft"},
+				},
+			},
+		},
+	})
+
+	assert.Equal(t, "720p", body.Resolution)
+	assert.Equal(t, "21:9", body.Ratio)
+	assert.Nil(t, body.Duration)
+	require.NotNil(t, body.Frames)
+	assert.Equal(t, 57, int(*body.Frames))
+	require.NotNil(t, body.ReturnLastFrame)
+	assert.True(t, bool(*body.ReturnLastFrame))
+	assert.Equal(t, "default", body.ServiceTier)
+	require.NotNil(t, body.ExecutionExpiresAfter)
+	assert.Equal(t, 3600, int(*body.ExecutionExpiresAfter))
+	require.NotNil(t, body.GenerateAudio)
+	assert.True(t, bool(*body.GenerateAudio))
+	require.NotNil(t, body.Draft)
+	assert.False(t, bool(*body.Draft))
+	require.NotNil(t, body.Watermark)
+	assert.False(t, bool(*body.Watermark))
+	require.NotNil(t, body.Seed)
+	assert.Equal(t, 123, int(*body.Seed))
+	require.NotNil(t, body.CameraFixed)
+	assert.False(t, bool(*body.CameraFixed))
+	assert.Equal(t, []any{map[string]any{"type": "web_search"}}, body.Tools)
+	assert.Equal(t, "user-hash", body.SafetyIdentifier)
+	require.Len(t, body.Content, 2)
+	require.NotNil(t, body.Content[0].DraftTask)
+	assert.Equal(t, "cgt-draft", body.Content[0].DraftTask.ID)
 }
 
 func TestBuildRequestBodyUsesInternalCallbackURL(t *testing.T) {
@@ -90,6 +230,65 @@ func TestBuildRequestBodyUsesInternalCallbackURL(t *testing.T) {
 	require.NoError(t, common.Unmarshal(bodyBytes, &out))
 	assert.Equal(t, "https://platform.example/api/task/callback/zlhub/video", out["callback_url"])
 	assert.NotEqual(t, "https://user.example/callback", out["callback_url"])
+}
+
+func TestDoResponseUsesTaskCreateEnvelope(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/task/create", nil)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2.0",
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_public",
+		},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"cgt-upstream"}`)),
+	}
+
+	taskID, body, taskErr := adaptor.DoResponse(c, resp, info)
+
+	require.Nil(t, taskErr)
+	assert.Equal(t, "cgt-upstream", taskID)
+	assert.JSONEq(t, `{"id":"cgt-upstream"}`, string(body))
+
+	var out map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &out))
+	assert.Equal(t, "success", out["code"])
+	assert.Empty(t, out["message"])
+	assert.NotContains(t, out, "object")
+	data, ok := out["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "task_public", data["id"])
+	assert.Equal(t, "task_public", data["task_id"])
+	assert.Equal(t, "doubao-seedance-2.0", data["model"])
+	assert.Equal(t, dto.VideoStatusQueued, data["status"])
+}
+
+func TestParseNativeRequestAllowsMediaOnlyContent(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	rawBody := []byte(`{
+		"model": "doubao-seedance-2.0",
+		"content": [
+			{"type": "image_url", "image_url": {"url": "https://example.com/ref.jpg"}, "role": "first_frame"}
+		],
+		"duration": 5
+	}`)
+	var nativeReq map[string]any
+	require.NoError(t, common.Unmarshal(rawBody, &nativeReq))
+
+	taskErr := adaptor.parseNativeRequest(c, info, nativeReq, rawBody)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Empty(t, req.Prompt)
+	assert.Equal(t, []string{"https://example.com/ref.jpg"}, req.Images)
 }
 
 func TestExtractImageRolesUsesIndex(t *testing.T) {

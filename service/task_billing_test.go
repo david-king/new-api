@@ -715,8 +715,9 @@ func TestSettle_TotalTokensTakePriorityAndSkipSecondsRatio(t *testing.T) {
 	task.PrivateData.BillingContext.ModelRatio = 2
 	task.PrivateData.BillingContext.GroupRatio = 1
 	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
-		"seconds":     6,
-		"video_input": 0.5,
+		"estimated_tokens": 3,
+		"seconds":          6,
+		"video_input":      0.5,
 	}
 
 	adaptor := &mockAdaptor{adjustReturn: 9000}
@@ -724,7 +725,7 @@ func TestSettle_TotalTokensTakePriorityAndSkipSecondsRatio(t *testing.T) {
 
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
-	const actualQuota = 100 // 100 tokens * modelRatio 2 * video_input 0.5; seconds is only a precharge estimate.
+	const actualQuota = 100 // 100 tokens * modelRatio 2 * video_input 0.5; estimate ratios are only for precharge.
 	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, actualQuota, task.Quota)

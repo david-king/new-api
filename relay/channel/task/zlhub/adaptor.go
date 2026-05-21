@@ -29,32 +29,59 @@ import (
 // ============================
 
 type ContentItem struct {
-	Type     string    `json:"type,omitempty"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *MediaURL `json:"image_url,omitempty"`
-	VideoURL *MediaURL `json:"video_url,omitempty"`
-	AudioURL *MediaURL `json:"audio_url,omitempty"`
-	Role     string    `json:"role,omitempty"`
+	Type      string     `json:"type,omitempty"`
+	Text      string     `json:"text,omitempty"`
+	ImageURL  *MediaURL  `json:"image_url,omitempty"`
+	VideoURL  *MediaURL  `json:"video_url,omitempty"`
+	AudioURL  *MediaURL  `json:"audio_url,omitempty"`
+	DraftTask *DraftTask `json:"draft_task,omitempty"`
+	Role      string     `json:"role,omitempty"`
 }
 
 type MediaURL struct {
 	URL string `json:"url,omitempty"`
 }
 
+type DraftTask struct {
+	ID string `json:"id,omitempty"`
+}
+
 type requestPayload struct {
-	Model         string         `json:"model"`
-	Content       []ContentItem  `json:"content,omitempty"`
-	CallbackURL   string         `json:"callback_url,omitempty"`
-	GenerateAudio *dto.BoolValue `json:"generate_audio,omitempty"`
-	Ratio         string         `json:"ratio,omitempty"`
-	Resolution    string         `json:"resolution,omitempty"`
-	Duration      *dto.IntValue  `json:"duration,omitempty"`
-	Watermark     *dto.BoolValue `json:"watermark,omitempty"`
-	Seed          *dto.IntValue  `json:"seed,omitempty"`
+	Model                 string         `json:"model"`
+	Content               []ContentItem  `json:"content,omitempty"`
+	CallbackURL           string         `json:"callback_url,omitempty"`
+	ReturnLastFrame       *dto.BoolValue `json:"return_last_frame,omitempty"`
+	ServiceTier           string         `json:"service_tier,omitempty"`
+	ExecutionExpiresAfter *dto.IntValue  `json:"execution_expires_after,omitempty"`
+	GenerateAudio         *dto.BoolValue `json:"generate_audio,omitempty"`
+	Draft                 *dto.BoolValue `json:"draft,omitempty"`
+	Tools                 any            `json:"tools,omitempty"`
+	SafetyIdentifier      string         `json:"safety_identifier,omitempty"`
+	Ratio                 string         `json:"ratio,omitempty"`
+	Resolution            string         `json:"resolution,omitempty"`
+	Duration              *dto.IntValue  `json:"duration,omitempty"`
+	Frames                *dto.IntValue  `json:"frames,omitempty"`
+	Watermark             *dto.BoolValue `json:"watermark,omitempty"`
+	Seed                  *dto.IntValue  `json:"seed,omitempty"`
+	CameraFixed           *dto.BoolValue `json:"camera_fixed,omitempty"`
 }
 
 type createResponse struct {
 	ID string `json:"id"`
+}
+
+type taskCreateResponse struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Data    taskCreateData `json:"data"`
+}
+
+type taskCreateData struct {
+	ID        string `json:"id"`
+	TaskID    string `json:"task_id"`
+	Model     string `json:"model"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 type queryResponse struct {
@@ -71,16 +98,24 @@ type taskData struct {
 		VideoURL     string `json:"video_url"`
 		LastFrameURL string `json:"last_frame_url"`
 	} `json:"content"`
-	Duration        int    `json:"duration"`
-	Ratio           string `json:"ratio"`
-	Resolution      string `json:"resolution"`
-	Seed            int    `json:"seed"`
-	GenerateAudio   bool   `json:"generate_audio"`
-	Watermark       bool   `json:"watermark"`
-	FramesPerSecond int    `json:"framespersecond"`
-	Usage           struct {
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+	Duration              int    `json:"duration"`
+	Frames                int    `json:"frames"`
+	Ratio                 string `json:"ratio"`
+	Resolution            string `json:"resolution"`
+	Seed                  int    `json:"seed"`
+	GenerateAudio         bool   `json:"generate_audio"`
+	Watermark             bool   `json:"watermark"`
+	FramesPerSecond       int    `json:"framespersecond"`
+	Tools                 any    `json:"tools"`
+	SafetyIdentifier      string `json:"safety_identifier"`
+	Draft                 bool   `json:"draft"`
+	DraftTaskID           string `json:"draft_task_id"`
+	ServiceTier           string `json:"service_tier"`
+	ExecutionExpiresAfter int    `json:"execution_expires_after"`
+	Usage                 struct {
+		CompletionTokens int            `json:"completion_tokens"`
+		TotalTokens      int            `json:"total_tokens"`
+		ToolUsage        map[string]int `json:"tool_usage"`
 	} `json:"usage"`
 	Cost struct {
 		Currency   string `json:"currency"`
@@ -218,6 +253,7 @@ func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.Relay
 	}
 
 	// 从 content 数组提取 prompt（找 type=text 的条目）
+	hasNonTextContent := false
 	if contentArr, ok := nativeReq["content"].([]interface{}); ok {
 		for _, item := range contentArr {
 			if m, ok := item.(map[string]interface{}); ok {
@@ -226,12 +262,14 @@ func (a *TaskAdaptor) parseNativeRequest(c *gin.Context, info *relaycommon.Relay
 						req.Prompt = text
 						break
 					}
+				} else {
+					hasNonTextContent = true
 				}
 			}
 		}
 	}
-	if strings.TrimSpace(req.Prompt) == "" {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required (add a text item in content array)"), "missing_prompt", http.StatusBadRequest)
+	if strings.TrimSpace(req.Prompt) == "" && !hasNonTextContent {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content must include text or media item"), "missing_content", http.StatusBadRequest)
 	}
 
 	if callbackURL, ok := nativeReq["callback_url"].(string); ok {
@@ -313,18 +351,17 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	ratios := map[string]float64{}
-	duration := req.Duration
-	if duration <= 0 {
-		if sec, err := strconv.Atoi(req.Seconds); err == nil && sec > 0 {
-			duration = sec
-		}
-	}
-	if duration <= 0 {
-		duration = 5
-	}
-	ratios["seconds"] = float64(duration)
 
-	resolution, hasVideoInput := zlhubBillingInputs(c, req)
+	resolution, ratio, hasVideoInput := zlhubBillingInputs(c, req)
+	if !info.PriceData.UsePrice {
+		if estimatedTokens := estimateSeedanceVideoTokens(req, resolution, ratio, hasVideoInput); estimatedTokens > 0 {
+			ratios["estimated_tokens"] = 2 * estimatedTokens / common.QuotaPerUnit
+		}
+	} else {
+		duration := zlhubEstimateDurationSeconds(req)
+		ratios["seconds"] = duration
+	}
+
 	if priceRatio, ok := taskcommon.Seedance2PriceRatio(info.OriginModelName, resolution, hasVideoInput); ok && priceRatio != 1 {
 		ratios["seedance_price"] = priceRatio
 	}
@@ -332,8 +369,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
-func zlhubBillingInputs(c *gin.Context, req relaycommon.TaskSubmitReq) (resolution string, hasVideoInput bool) {
+func zlhubBillingInputs(c *gin.Context, req relaycommon.TaskSubmitReq) (resolution string, ratio string, hasVideoInput bool) {
 	resolution = taskcommon.MetadataString(req.Metadata, "resolution")
+	ratio = taskcommon.MetadataString(req.Metadata, "ratio")
 	hasVideoInput = taskcommon.HasVideoInMetadata(req.Metadata)
 
 	if rawBody, exists := c.Get(nativeRequestBodyKey); exists {
@@ -344,15 +382,144 @@ func zlhubBillingInputs(c *gin.Context, req relaycommon.TaskSubmitReq) (resoluti
 				if v, ok := nativeReq["resolution"].(string); ok && strings.TrimSpace(v) != "" {
 					resolution = strings.TrimSpace(v)
 				}
+				if v, ok := nativeReq["ratio"].(string); ok && strings.TrimSpace(v) != "" {
+					ratio = strings.TrimSpace(v)
+				}
 				hasVideoInput = hasVideoInput || taskcommon.HasVideoInContent(nativeReq["content"])
 			}
 		}
 	}
 
 	if resolution == "" {
+		resolution = strings.TrimSpace(req.Resolution)
+	}
+	if resolution == "" {
 		resolution = strings.TrimSpace(req.Size)
 	}
-	return resolution, hasVideoInput
+	if ratio == "" {
+		ratio = strings.TrimSpace(req.Ratio)
+	}
+	if ratio == "" && looksLikeAspectRatio(req.Size) {
+		ratio = strings.TrimSpace(req.Size)
+	}
+	return resolution, ratio, hasVideoInput
+}
+
+func estimateSeedanceVideoTokens(req relaycommon.TaskSubmitReq, resolution, ratio string, hasVideoInput bool) float64 {
+	width, height := seedanceVideoDimensions(resolution, ratio)
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	frames := zlhubEstimateFrames(req)
+	if hasVideoInput {
+		frames += seedanceEstimateInputVideoFrames()
+	}
+	return float64(width*height*frames) / 1024
+}
+
+func zlhubEstimateFrames(req relaycommon.TaskSubmitReq) int {
+	if req.Frames != nil && int(*req.Frames) > 0 {
+		return int(*req.Frames)
+	}
+	if frames := zlhubIntFromAny(req.Metadata["frames"]); frames > 0 {
+		return frames
+	}
+	return int(zlhubEstimateDurationSeconds(req) * 24)
+}
+
+func zlhubEstimateDurationSeconds(req relaycommon.TaskSubmitReq) float64 {
+	duration := req.Duration
+	if duration <= 0 {
+		if d := zlhubIntFromAny(req.Metadata["duration"]); d > 0 {
+			duration = d
+		}
+	}
+	if duration <= 0 {
+		if sec, err := strconv.Atoi(req.Seconds); err == nil && sec > 0 {
+			duration = sec
+		}
+	}
+	if duration <= 0 {
+		duration = 5
+	}
+	return float64(duration)
+}
+
+func zlhubIntFromAny(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		i, _ := strconv.Atoi(n)
+		return i
+	default:
+		return 0
+	}
+}
+
+func seedanceEstimateInputVideoFrames() int {
+	const minInputVideoSeconds = 4
+	return minInputVideoSeconds * 24
+}
+
+func seedanceVideoDimensions(resolution, ratio string) (int, int) {
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	ratio = strings.ToLower(strings.TrimSpace(ratio))
+	if resolution == "" {
+		resolution = "720p"
+	}
+	if ratio == "" || ratio == "adaptive" {
+		ratio = "16:9"
+	}
+
+	dimensions := map[string]map[string][2]int{
+		"480p": {
+			"16:9": {864, 496},
+			"4:3":  {752, 560},
+			"1:1":  {640, 640},
+			"3:4":  {560, 752},
+			"9:16": {496, 864},
+			"21:9": {992, 432},
+		},
+		"720p": {
+			"16:9": {1280, 720},
+			"4:3":  {1112, 834},
+			"1:1":  {960, 960},
+			"3:4":  {834, 1112},
+			"9:16": {720, 1280},
+			"21:9": {1470, 630},
+		},
+		"1080p": {
+			"16:9": {1920, 1080},
+			"4:3":  {1664, 1248},
+			"1:1":  {1440, 1440},
+			"3:4":  {1248, 1664},
+			"9:16": {1080, 1920},
+			"21:9": {2206, 946},
+		},
+	}
+	if resolution == "480" {
+		resolution = "480p"
+	}
+	if resolution == "720" {
+		resolution = "720p"
+	}
+	if resolution == "1080" {
+		resolution = "1080p"
+	}
+	byRatio, ok := dimensions[resolution]
+	if !ok {
+		byRatio = dimensions["720p"]
+	}
+	d, ok := byRatio[ratio]
+	if !ok {
+		d = byRatio["16:9"]
+	}
+	return d[0], d[1]
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -434,14 +601,36 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	ov := dto.NewOpenAIVideo()
-	ov.ID = info.PublicTaskID
-	ov.TaskID = info.PublicTaskID
-	ov.CreatedAt = time.Now().Unix()
-	ov.Model = info.OriginModelName
+	createdAt := time.Now().Unix()
+	if isTaskCreateEndpoint(c) {
+		c.JSON(http.StatusOK, taskCreateResponse{
+			Code:    "success",
+			Message: "",
+			Data: taskCreateData{
+				ID:        info.PublicTaskID,
+				TaskID:    info.PublicTaskID,
+				Model:     info.OriginModelName,
+				Status:    dto.VideoStatusQueued,
+				CreatedAt: createdAt,
+			},
+		})
+	} else {
+		ov := dto.NewOpenAIVideo()
+		ov.ID = info.PublicTaskID
+		ov.TaskID = info.PublicTaskID
+		ov.CreatedAt = createdAt
+		ov.Model = info.OriginModelName
 
-	c.JSON(http.StatusOK, ov)
+		c.JSON(http.StatusOK, ov)
+	}
 	return createResp.ID, responseBody, nil
+}
+
+func isTaskCreateEndpoint(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	return strings.HasPrefix(c.Request.URL.Path, "/v1/task/create")
 }
 
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
@@ -507,14 +696,65 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) *r
 
 	// 从 metadata 解析其他字段（video_url, audio_url, ratio 等）
 	_ = taskcommon.UnmarshalMetadata(req.Metadata, &r)
+	if r.Resolution == "" {
+		r.Resolution = strings.TrimSpace(req.Resolution)
+	}
+	if r.Ratio == "" && strings.TrimSpace(req.Ratio) != "" {
+		r.Ratio = strings.TrimSpace(req.Ratio)
+	}
 	if r.Ratio == "" && looksLikeAspectRatio(req.Size) {
 		r.Ratio = strings.TrimSpace(req.Size)
 	}
+	if r.ReturnLastFrame == nil {
+		r.ReturnLastFrame = req.ReturnLastFrame
+	}
+	if r.ServiceTier == "" {
+		r.ServiceTier = strings.TrimSpace(req.ServiceTier)
+	}
+	if r.ExecutionExpiresAfter == nil {
+		r.ExecutionExpiresAfter = req.ExecutionExpiresAfter
+	}
+	if r.GenerateAudio == nil {
+		r.GenerateAudio = req.GenerateAudio
+	}
+	if r.Draft == nil {
+		r.Draft = req.Draft
+	}
+	if r.Tools == nil {
+		r.Tools = req.Tools
+	}
+	if r.SafetyIdentifier == "" {
+		r.SafetyIdentifier = strings.TrimSpace(req.SafetyIdentifier)
+	}
+	if r.Frames == nil {
+		r.Frames = req.Frames
+	}
+	if r.Watermark == nil {
+		r.Watermark = req.Watermark
+	}
+	if r.Seed == nil {
+		r.Seed = req.Seed
+	}
+	if r.CameraFixed == nil {
+		r.CameraFixed = req.CameraFixed
+	}
 
-	if req.Duration > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
-	} else if sec, err := strconv.Atoi(req.Seconds); err == nil && sec > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	if r.Frames != nil {
+		r.Duration = nil
+	}
+	if r.Duration != nil && int(*r.Duration) <= 0 {
+		r.Duration = nil
+	}
+	if r.Frames != nil && int(*r.Frames) <= 0 {
+		r.Frames = nil
+	}
+
+	if r.Duration == nil && r.Frames == nil {
+		if req.Duration > 0 {
+			r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+		} else if sec, err := strconv.Atoi(req.Seconds); err == nil && sec > 0 {
+			r.Duration = lo.ToPtr(dto.IntValue(sec))
+		}
 	}
 
 	// 替换 text 项为 prompt

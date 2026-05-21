@@ -41,8 +41,20 @@ func TestVideoTaskResultResponseBodyIsSanitized(t *testing.T) {
 				"id": "cgt-2025-test",
 				"model": "doubao-seedance-2.0",
 				"status": "succeeded",
-				"content": {"video_url": "https://example.com/video.mp4"},
-				"usage": {"completion_tokens": 108900, "total_tokens": 108900},
+				"error": null,
+				"content": {
+					"video_url": "https://example.com/video.mp4",
+					"last_frame_url": "https://example.com/last-frame.png"
+				},
+				"usage": {
+					"completion_tokens": 108900,
+					"total_tokens": 108900,
+					"tool_usage": {"web_search": 1}
+				},
+				"frames": 120,
+				"tools": [{"type": "web_search"}],
+				"safety_identifier": "user-hash",
+				"draft_task_id": "cgt-draft",
 				"cost": {"total_cost": "1.23"},
 				"extra": "not exposed"
 			}
@@ -60,6 +72,15 @@ func TestVideoTaskResultResponseBodyIsSanitized(t *testing.T) {
 	assert.Equal(t, "task_public", data["task_id"])
 	assert.Equal(t, "cgt-2025-test", data["upstream_id"])
 	assert.Equal(t, "succeeded", data["status"])
+	assert.Contains(t, data, "error")
+	assert.Equal(t, float64(120), data["frames"])
+	assert.Equal(t, "user-hash", data["safety_identifier"])
+	assert.Equal(t, "cgt-draft", data["draft_task_id"])
+	usage, ok := data["usage"].(map[string]any)
+	require.True(t, ok)
+	toolUsage, ok := usage["tool_usage"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(1), toolUsage["web_search"])
 	assert.NotContains(t, data, "data")
 	assert.NotContains(t, data, "cost")
 	assert.NotContains(t, data, "extra")

@@ -249,7 +249,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 
 func taskTokenOtherRatioApplies(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "seconds", "second", "duration", "duration_seconds":
+	case "seconds", "second", "duration", "duration_seconds", "estimated_tokens", "estimated_token_ratio", "video_token_estimate":
 		return false
 	default:
 		return true

@@ -31,8 +31,16 @@ func TestVideoTaskResultFromTaskSanitizesStoredData(t *testing.T) {
 				"id": "cgt-2025-test",
 				"model": "doubao-seedance-2.0",
 				"status": "succeeded",
-				"content": {"video_url": "https://example.com/video.mp4"},
-				"usage": {"completion_tokens": 108900, "total_tokens": 108900},
+				"error": null,
+				"content": {
+					"video_url": "https://example.com/video.mp4",
+					"last_frame_url": "https://example.com/last-frame.png"
+				},
+				"usage": {
+					"completion_tokens": 108900,
+					"total_tokens": 108900,
+					"tool_usage": {"web_search": 2}
+				},
 				"created_at": 1743414619,
 				"updated_at": 1743414673,
 				"seed": 10,
@@ -40,10 +48,13 @@ func TestVideoTaskResultFromTaskSanitizesStoredData(t *testing.T) {
 				"ratio": "16:9",
 				"duration": 5,
 				"framespersecond": 24,
+				"tools": [{"type": "web_search"}],
+				"safety_identifier": "user-hash",
 				"service_tier": "default",
 				"execution_expires_after": 172800,
 				"generate_audio": true,
 				"draft": false,
+				"draft_task_id": "cgt-draft",
 				"cost": {"total_cost": "1.23"},
 				"extra": "not exposed"
 			}
@@ -61,10 +72,18 @@ func TestVideoTaskResultFromTaskSanitizesStoredData(t *testing.T) {
 	assert.Equal(t, "cgt-2025-test", result.UpstreamID)
 	assert.Equal(t, "succeeded", result.Status)
 	assert.Equal(t, "https://example.com/video.mp4", result.Content.VideoURL)
+	assert.Equal(t, "https://example.com/last-frame.png", result.Content.LastFrameURL)
 	assert.Equal(t, 108900, result.Usage.CompletionTokens)
+	assert.Equal(t, 108900, result.Usage.TotalTokens)
+	assert.Equal(t, 2, result.Usage.ToolUsage["web_search"])
 	assert.Equal(t, "720p", result.Resolution)
 	assert.Equal(t, "16:9", result.Ratio)
 	assert.Equal(t, 5, result.Duration)
+	assert.Equal(t, 24, result.FramesPerSecond)
+	assert.Equal(t, "user-hash", result.SafetyIdentifier)
+	assert.Equal(t, "default", result.ServiceTier)
+	assert.Equal(t, 172800, result.ExecutionExpiresAfter)
+	assert.Equal(t, "cgt-draft", result.DraftTaskID)
 	assert.True(t, *result.GenerateAudio)
 	assert.False(t, *result.Draft)
 

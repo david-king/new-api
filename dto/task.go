@@ -55,7 +55,14 @@ type TaskDto struct {
 }
 
 type VideoTaskContentDto struct {
-	VideoURL string `json:"video_url,omitempty"`
+	VideoURL     string `json:"video_url,omitempty"`
+	LastFrameURL string `json:"last_frame_url,omitempty"`
+}
+
+type VideoTaskUsageDto struct {
+	CompletionTokens int            `json:"completion_tokens,omitempty"`
+	TotalTokens      int            `json:"total_tokens,omitempty"`
+	ToolUsage        map[string]int `json:"tool_usage,omitempty"`
 }
 
 type VideoTaskResultDto struct {
@@ -64,19 +71,24 @@ type VideoTaskResultDto struct {
 	UpstreamID            string               `json:"upstream_id,omitempty"`
 	Model                 string               `json:"model,omitempty"`
 	Status                string               `json:"status"`
+	Error                 any                  `json:"error"`
 	Content               *VideoTaskContentDto `json:"content,omitempty"`
-	Usage                 *Usage               `json:"usage,omitempty"`
+	Usage                 *VideoTaskUsageDto   `json:"usage,omitempty"`
 	CreatedAt             int64                `json:"created_at,omitempty"`
 	UpdatedAt             int64                `json:"updated_at,omitempty"`
 	Seed                  int                  `json:"seed,omitempty"`
 	Resolution            string               `json:"resolution,omitempty"`
 	Ratio                 string               `json:"ratio,omitempty"`
 	Duration              int                  `json:"duration,omitempty"`
+	Frames                int                  `json:"frames,omitempty"`
 	FramesPerSecond       int                  `json:"framespersecond,omitempty"`
+	Tools                 any                  `json:"tools,omitempty"`
+	SafetyIdentifier      string               `json:"safety_identifier,omitempty"`
 	ServiceTier           string               `json:"service_tier,omitempty"`
 	ExecutionExpiresAfter int                  `json:"execution_expires_after,omitempty"`
 	GenerateAudio         *bool                `json:"generate_audio,omitempty"`
 	Draft                 *bool                `json:"draft,omitempty"`
+	DraftTaskID           string               `json:"draft_task_id,omitempty"`
 }
 
 type FetchReq struct {

@@ -52,17 +52,22 @@ func VideoTaskResultFromTask(task *model.Task) *dto.VideoTaskResultDto {
 		UpstreamID:            upstreamID,
 		Model:                 firstNonEmpty(taskStringFromMap(payload, "model"), task.Properties.OriginModelName, task.Properties.UpstreamModelName),
 		Status:                firstNonEmpty(taskStringFromMap(payload, "status"), mapTaskStatusToVideoResult(task.Status)),
+		Error:                 payload["error"],
 		CreatedAt:             taskInt64FromMap(payload, "created_at"),
 		UpdatedAt:             taskInt64FromMap(payload, "updated_at"),
 		Seed:                  taskIntFromMap(payload, "seed"),
 		Resolution:            resolution,
 		Ratio:                 taskStringFromMap(payload, "ratio"),
 		Duration:              taskIntFromMap(payload, "duration"),
+		Frames:                taskIntFromMap(payload, "frames"),
 		FramesPerSecond:       taskIntFromMap(payload, "framespersecond"),
+		Tools:                 payload["tools"],
+		SafetyIdentifier:      taskStringFromMap(payload, "safety_identifier"),
 		ServiceTier:           taskStringFromMap(payload, "service_tier"),
 		ExecutionExpiresAfter: taskIntFromMap(payload, "execution_expires_after"),
 		GenerateAudio:         taskBoolPtrFromMap(payload, "generate_audio"),
 		Draft:                 taskBoolPtrFromMap(payload, "draft"),
+		DraftTaskID:           taskStringFromMap(payload, "draft_task_id"),
 	}
 	if result.CreatedAt == 0 {
 		result.CreatedAt = task.CreatedAt
@@ -75,12 +80,16 @@ func VideoTaskResultFromTask(task *model.Task) *dto.VideoTaskResultDto {
 	if videoURL == "" {
 		videoURL = task.GetResultURL()
 	}
-	if videoURL != "" {
-		result.Content = &dto.VideoTaskContentDto{VideoURL: videoURL}
+	lastFrameURL := taskContentLastFrameURL(payload)
+	if videoURL != "" || lastFrameURL != "" {
+		result.Content = &dto.VideoTaskContentDto{
+			VideoURL:     videoURL,
+			LastFrameURL: lastFrameURL,
+		}
 	}
 
 	usageMap, _ := payload["usage"].(map[string]any)
-	result.Usage = taskUsageFromMap(usageMap)
+	result.Usage = videoTaskUsageFromMap(usageMap)
 	return result
 }
 
@@ -379,6 +388,11 @@ func taskContentVideoURL(payload map[string]any) string {
 	return taskStringFromMap(content, "video_url")
 }
 
+func taskContentLastFrameURL(payload map[string]any) string {
+	content, _ := payload["content"].(map[string]any)
+	return taskStringFromMap(content, "last_frame_url")
+}
+
 func taskStringFromMap(m map[string]any, key string) string {
 	if len(m) == 0 {
 		return ""
@@ -441,6 +455,38 @@ func taskUsageFromMap(usageMap map[string]any) *dto.Usage {
 		CompletionTokens: completionTokens,
 		TotalTokens:      totalTokens,
 	}
+}
+
+func videoTaskUsageFromMap(usageMap map[string]any) *dto.VideoTaskUsageDto {
+	if len(usageMap) == 0 {
+		return nil
+	}
+	completionTokens := taskIntFromAny(usageMap["completion_tokens"])
+	totalTokens := taskIntFromAny(usageMap["total_tokens"])
+	if totalTokens <= 0 {
+		totalTokens = completionTokens
+	}
+	toolUsage := taskToolUsageFromMap(usageMap["tool_usage"])
+	if completionTokens <= 0 && totalTokens <= 0 && len(toolUsage) == 0 {
+		return nil
+	}
+	return &dto.VideoTaskUsageDto{
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		ToolUsage:        toolUsage,
+	}
+}
+
+func taskToolUsageFromMap(v any) map[string]int {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	toolUsage := make(map[string]int, len(m))
+	for key, value := range m {
+		toolUsage[key] = taskIntFromAny(value)
+	}
+	return toolUsage
 }
 
 func taskIntFromAny(v any) int {
