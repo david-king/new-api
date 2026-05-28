@@ -1323,55 +1323,109 @@ export function ChannelMutateDrawer({
                       />
                     )}
 
-                    {/* AWS (type 33) */}
-                    {currentType === 33 && (
-                      <FormField
-                        control={form.control}
-                        name='aws_key_type'
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>{t('AWS Key Format')}</FormLabel>
-                            <Select
-                              items={[
-                                {
-                                  value: 'ak_sk',
-                                  label: t('AccessKey / SecretAccessKey'),
-                                },
-                                { value: 'api_key', label: t('API Key') },
-                              ]}
-                              onValueChange={field.onChange}
-                              value={field.value}
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue
-                                    placeholder={t('Select key format')}
-                                  />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent alignItemWithTrigger={false}>
-                                <SelectGroup>
-                                  <SelectItem value='ak_sk'>
-                                    {t('AccessKey / SecretAccessKey')}
-                                  </SelectItem>
-                                  <SelectItem value='api_key'>
-                                    {t('API Key')}
-                                  </SelectItem>
-                                </SelectGroup>
-                              </SelectContent>
-                            </Select>
-                            <FormDescription>
-                              {field.value === 'api_key'
-                                ? t('API Key mode: use APIKey|Region')
-                                : t(
-                                    'AK/SK mode: use AccessKey|SecretAccessKey|Region'
-                                  )}
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                {/* AWS (type 33) */}
+                {currentType === 33 && (
+                  <FormField
+                    control={form.control}
+                    name='aws_key_type'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('AWS Key Format')}</FormLabel>
+                        <Select
+                          items={[
+                            {
+                              value: 'ak_sk',
+                              label: t('AccessKey / SecretAccessKey'),
+                            },
+                            { value: 'api_key', label: t('API Key') },
+                          ]}
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={t('Select key format')}
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='ak_sk'>
+                                {t('AccessKey / SecretAccessKey')}
+                              </SelectItem>
+                              <SelectItem value='api_key'>
+                                {t('API Key')}
+                              </SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {field.value === 'api_key'
+                            ? t('API Key mode: use APIKey|Region')
+                            : t(
+                                'AK/SK mode: use AccessKey|SecretAccessKey|Region'
+                              )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
                     )}
+                  />
+                )}
+
+                {/* ZLHub (type 58) — dual key input */}
+                {currentType === 58 && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name='zlhub_video_key'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Video API Key *')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='password'
+                              placeholder={t(
+                                'Enter ZLHub video generation API key'
+                              )}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Used for Authorization: Bearer header in video APIs'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='zlhub_asset_token'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Asset Access Token')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='password'
+                              placeholder={t(
+                                'Enter asset review access token (leave empty if same as video key)'
+                              )}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Used for X-Access-Token header in asset review APIs'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
 
                     {/* AI Proxy Library (type 21) */}
                     {currentType === 21 && (
@@ -1831,6 +1885,7 @@ export function ChannelMutateDrawer({
                         />
                       )}
 
+                {currentType !== 58 && (
                       <FormField
                         control={form.control}
                         name='key'
@@ -1974,6 +2029,7 @@ export function ChannelMutateDrawer({
                           )
                         }}
                       />
+              )}
 
                       {currentType === 57 && (
                         <div className='border-border/60 flex flex-col gap-3 border-y py-4'>

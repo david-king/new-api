@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/samber/lo"
@@ -30,6 +28,8 @@ type TaskPollingAdaptor interface {
 	// 返回正数触发差额结算（补扣/退还），返回 0 保持预扣费金额不变。
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
+
+const zlhubVideoPollIntervalSeconds int64 = 60
 
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
@@ -353,6 +353,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	if shouldSkipVideoTaskPoll(ctx, ch, task, time.Now().Unix()) {
+		return nil
+	}
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -374,8 +377,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
-	snap := task.Snapshot()
-
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
@@ -396,109 +397,36 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
-	now := time.Now().Unix()
-	if taskResult.Status == "" {
-		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
-		errorResult := &dto.GeneralErrorResponse{}
-		if err = common.Unmarshal(responseBody, &errorResult); err == nil {
-			openaiError := errorResult.TryToOpenAIError()
-			if openaiError != nil {
-				// 返回规范的 OpenAI 错误格式，提取错误信息，判断错误是否为任务失败
-				if openaiError.Code == "429" {
-					// 429 错误通常表示请求过多或速率限制，暂时不认为是任务失败，保持原状态等待下一轮轮询
-					return nil
-				}
+	return ApplyVideoTaskResult(ctx, adaptor, task, responseBody, taskResult)
+}
 
-				// 其他错误认为是任务失败，记录错误信息并更新任务状态
-				taskResult = relaycommon.FailTaskInfo("upstream returned error")
-			} else {
-				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
-				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
-			}
-		}
+func shouldSkipVideoTaskPoll(ctx context.Context, ch *model.Channel, task *model.Task, now int64) bool {
+	if shouldThrottleZLHubVideoPoll(ch, task, now) {
+		logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling: last poll was %d seconds ago", task.TaskID, now-task.PrivateData.LastPollAt))
+		return true
 	}
+	if ch == nil || ch.Type != constant.ChannelTypeZLHub || task == nil {
+		return false
+	}
+	task.PrivateData.LastPollAt = now
+	won, err := task.UpdatePrivateDataWithStatus(task.Status)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("Failed to persist ZLHub task poll timestamp %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	if !won {
+		logger.LogDebug(ctx, fmt.Sprintf("Skip ZLHub task %s polling because status changed before poll", task.TaskID))
+		return true
+	}
+	return false
+}
 
-	shouldRefund := false
-	shouldSettle := false
-	quota := task.Quota
-
-	task.Status = model.TaskStatus(taskResult.Status)
-	switch taskResult.Status {
-	case model.TaskStatusSubmitted:
-		task.Progress = taskcommon.ProgressSubmitted
-	case model.TaskStatusQueued:
-		task.Progress = taskcommon.ProgressQueued
-	case model.TaskStatusInProgress:
-		task.Progress = taskcommon.ProgressInProgress
-		if task.StartTime == 0 {
-			task.StartTime = now
-		}
-	case model.TaskStatusSuccess:
-		task.Progress = taskcommon.ProgressComplete
-		if task.FinishTime == 0 {
-			task.FinishTime = now
-		}
-		if strings.HasPrefix(taskResult.Url, "data:") {
-			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-		} else if taskResult.Url != "" {
-			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
-		} else {
-			// No URL from adaptor — construct proxy URL using public task ID
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-		}
-		shouldSettle = true
-	case model.TaskStatusFailure:
-		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
-		task.Status = model.TaskStatusFailure
-		task.Progress = taskcommon.ProgressComplete
-		if task.FinishTime == 0 {
-			task.FinishTime = now
-		}
-		task.FailReason = taskResult.Reason
-		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
-		taskResult.Progress = taskcommon.ProgressComplete
-		if quota != 0 {
-			shouldRefund = true
-		}
-	default:
-		return fmt.Errorf("unknown task status %s for task %s", taskResult.Status, task.TaskID)
+func shouldThrottleZLHubVideoPoll(ch *model.Channel, task *model.Task, now int64) bool {
+	if ch == nil || task == nil || ch.Type != constant.ChannelTypeZLHub {
+		return false
 	}
-	if taskResult.Progress != "" {
-		task.Progress = taskResult.Progress
-	}
-
-	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
-	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
-		if err != nil {
-			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
-			shouldRefund = false
-			shouldSettle = false
-		} else if !won {
-			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
-			shouldRefund = false
-			shouldSettle = false
-		}
-	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
-		}
-	} else {
-		// No changes, skip update
-		logger.LogDebug(ctx, "No update needed for task %s", task.TaskID)
-	}
-
-	if shouldSettle {
-		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
-	}
-	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
-	}
-
-	return nil
+	lastPollAt := task.PrivateData.LastPollAt
+	return lastPollAt > 0 && now-lastPollAt < zlhubVideoPollIntervalSeconds
 }
 
 func redactVideoResponseBody(body []byte) []byte {
@@ -536,9 +464,9 @@ func truncateBase64(s string) string {
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
-// 优先级：1. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
-//
-//  2. taskResult.TotalTokens > 0 → 按 token 重算
+// 优先级：
+//  1. 上游返回 token → 按 token 重算
+//  2. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
@@ -546,14 +474,14 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
-	// 1. 优先让 adaptor 决定最终额度
-	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+	// 1. 优先使用上游返回的真实 token，用于 ZLHub / Doubao 等按 token 返回 usage 的任务。
+	if taskResult.TotalTokens > 0 || taskResult.CompletionTokens > 0 {
+		RecalculateTaskQuotaByTaskResult(ctx, task, taskResult)
 		return
 	}
-	// 2. 回退到 token 重算
-	if taskResult.TotalTokens > 0 {
-		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
+	// 2. 没有 token 时，让 adaptor 决定最终额度（例如仅返回实际时长的渠道）。
+	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
+		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 		return
 	}
 	// 3. 无调整，保持预扣额度

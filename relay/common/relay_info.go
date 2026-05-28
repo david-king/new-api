@@ -682,16 +682,30 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt                string                 `json:"prompt"`
+	Model                 string                 `json:"model,omitempty"`
+	Mode                  string                 `json:"mode,omitempty"`
+	Image                 string                 `json:"image,omitempty"`
+	Images                []string               `json:"images,omitempty"`
+	Size                  string                 `json:"size,omitempty"`
+	Ratio                 string                 `json:"ratio,omitempty"`
+	Resolution            string                 `json:"resolution,omitempty"`
+	Duration              int                    `json:"duration,omitempty"`
+	Seconds               string                 `json:"seconds,omitempty"`
+	Frames                *dto.IntValue          `json:"frames,omitempty"`
+	ReturnLastFrame       *dto.BoolValue         `json:"return_last_frame,omitempty"`
+	ServiceTier           string                 `json:"service_tier,omitempty"`
+	ExecutionExpiresAfter *dto.IntValue          `json:"execution_expires_after,omitempty"`
+	GenerateAudio         *dto.BoolValue         `json:"generate_audio,omitempty"`
+	Draft                 *dto.BoolValue         `json:"draft,omitempty"`
+	Watermark             *dto.BoolValue         `json:"watermark,omitempty"`
+	Seed                  *dto.IntValue          `json:"seed,omitempty"`
+	CameraFixed           *dto.BoolValue         `json:"camera_fixed,omitempty"`
+	Tools                 any                    `json:"tools,omitempty"`
+	SafetyIdentifier      string                 `json:"safety_identifier,omitempty"`
+	InputReference        string                 `json:"input_reference,omitempty"`
+	CallbackURL           string                 `json:"callback_url,omitempty"`
+	Metadata              map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -773,6 +787,7 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Duration         int    `json:"duration,omitempty"`          // 视频时长（秒），用于按秒计费
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

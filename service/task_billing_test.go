@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
@@ -609,6 +610,69 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	assert.Equal(t, "50%", reloaded.Progress)
 }
 
+func TestShouldThrottleZLHubVideoPoll(t *testing.T) {
+	zlhubChannel := &model.Channel{Type: constant.ChannelTypeZLHub}
+	doubaoChannel := &model.Channel{Type: constant.ChannelTypeDoubaoVideo}
+	task := &model.Task{
+		PrivateData: model.TaskPrivateData{
+			LastPollAt: 100,
+		},
+	}
+
+	assert.True(t, shouldThrottleZLHubVideoPoll(zlhubChannel, task, 159))
+	assert.False(t, shouldThrottleZLHubVideoPoll(zlhubChannel, task, 160))
+	assert.False(t, shouldThrottleZLHubVideoPoll(doubaoChannel, task, 159))
+}
+
+func TestShouldSkipVideoTaskPollForZLHub(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	ch := &model.Channel{Type: constant.ChannelTypeZLHub}
+
+	task := &model.Task{
+		TaskID:    "task_zlhub_poll",
+		UserId:    1,
+		ChannelId: 1,
+		Status:    model.TaskStatusNotStart,
+		Progress:  "0%",
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	assert.False(t, shouldSkipVideoTaskPoll(ctx, ch, task, 100))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, int64(100), reloaded.PrivateData.LastPollAt)
+
+	assert.True(t, shouldSkipVideoTaskPoll(ctx, ch, &reloaded, 159))
+	assert.False(t, shouldSkipVideoTaskPoll(ctx, ch, &reloaded, 160))
+}
+
+func TestApplyVideoTaskResultDoesNotRegressTerminalStatus(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	task := &model.Task{
+		TaskID:    "task_terminal",
+		UserId:    1,
+		ChannelId: 1,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		Data:      json.RawMessage(`{"data":{"status":"succeeded"}}`),
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := ApplyVideoTaskResult(ctx, &mockAdaptor{}, task, []byte(`{"data":{"status":"running"}}`), &relaycommon.TaskInfo{
+		Status:   string(model.TaskStatusInProgress),
+		Progress: "50%",
+	})
+	require.NoError(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+}
+
 // ===========================================================================
 // Mock adaptor for settleTaskBillingOnComplete tests
 // ===========================================================================
@@ -682,6 +746,66 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestSettle_TotalTokensTakePriorityAndSkipSecondsRatio(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 32, 32, 32
+	const initQuota, preConsumed = 10000, 5000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-token-priority", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ModelRatio = 2
+	task.PrivateData.BillingContext.GroupRatio = 1
+	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
+		"estimated_tokens": 3,
+		"seconds":          6,
+		"video_input":      0.5,
+	}
+
+	adaptor := &mockAdaptor{adjustReturn: 9000}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 100}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	const actualQuota = 100 // 100 tokens * modelRatio 2 * video_input 0.5; estimate ratios are only for precharge.
+	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+}
+
+func TestSettle_CompletionTokensUseCompletionRatio(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 33, 33, 33
+	const initQuota, preConsumed = 10000, 5000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-completion-ratio", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ModelRatio = 2
+	task.PrivateData.BillingContext.GroupRatio = 1
+	task.PrivateData.BillingContext.CompletionRatio = 3
+
+	adaptor := &mockAdaptor{adjustReturn: 0}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 120, CompletionTokens: 20}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	const actualQuota = 120 // completion_tokens is authoritative for video usage: 20 * 3 * modelRatio 2
+	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
 }
 
 func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {

@@ -55,7 +55,7 @@ func createTaskError(err error, code string, statusCode int, localError bool) *d
 	}
 }
 
-func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
+func StoreTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
 	info.Action = action
 	c.Set("task_request", requestObj)
 }
@@ -86,12 +86,17 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	formData := c.Request.PostForm
 	req = TaskSubmitReq{
-		Prompt:   formData.Get("prompt"),
-		Model:    formData.Get("model"),
-		Mode:     formData.Get("mode"),
-		Image:    formData.Get("image"),
-		Size:     formData.Get("size"),
-		Metadata: make(map[string]interface{}),
+		Prompt:           formData.Get("prompt"),
+		Model:            formData.Get("model"),
+		Mode:             formData.Get("mode"),
+		Image:            formData.Get("image"),
+		Size:             formData.Get("size"),
+		Ratio:            formData.Get("ratio"),
+		Resolution:       formData.Get("resolution"),
+		ServiceTier:      formData.Get("service_tier"),
+		SafetyIdentifier: formData.Get("safety_identifier"),
+		CallbackURL:      formData.Get("callback_url"),
+		Metadata:         make(map[string]interface{}),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -99,6 +104,35 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 			req.Duration = duration
 		}
 	}
+	if framesStr := formData.Get("frames"); framesStr != "" {
+		if frames, err := strconv.Atoi(framesStr); err == nil {
+			v := dto.IntValue(frames)
+			req.Frames = &v
+		}
+	}
+	setFormIntValue := func(key string, target **dto.IntValue) {
+		if str := formData.Get(key); str != "" {
+			if i, err := strconv.Atoi(str); err == nil {
+				v := dto.IntValue(i)
+				*target = &v
+			}
+		}
+	}
+	setFormIntValue("execution_expires_after", &req.ExecutionExpiresAfter)
+	setFormIntValue("seed", &req.Seed)
+	setFormBoolValue := func(key string, target **dto.BoolValue) {
+		if str := formData.Get(key); str != "" {
+			if b, err := strconv.ParseBool(str); err == nil {
+				v := dto.BoolValue(b)
+				*target = &v
+			}
+		}
+	}
+	setFormBoolValue("return_last_frame", &req.ReturnLastFrame)
+	setFormBoolValue("generate_audio", &req.GenerateAudio)
+	setFormBoolValue("draft", &req.Draft)
+	setFormBoolValue("watermark", &req.Watermark)
+	setFormBoolValue("camera_fixed", &req.CameraFixed)
 
 	if images := formData["images"]; len(images) > 0 {
 		req.Images = images
@@ -176,21 +210,35 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		// OtherRatios 已移到 Sora adaptor 的 EstimateBilling 中设置
 	}
 
-	storeTaskRequest(c, info, action, req)
+	StoreTaskRequest(c, info, action, req)
 
 	return nil
 }
 
 func isKnownTaskField(field string) bool {
 	knownFields := map[string]bool{
-		"prompt":          true,
-		"model":           true,
-		"mode":            true,
-		"image":           true,
-		"images":          true,
-		"size":            true,
-		"duration":        true,
-		"input_reference": true, // Sora 特有字段
+		"prompt":                  true,
+		"model":                   true,
+		"mode":                    true,
+		"image":                   true,
+		"images":                  true,
+		"size":                    true,
+		"ratio":                   true,
+		"resolution":              true,
+		"duration":                true,
+		"frames":                  true,
+		"return_last_frame":       true,
+		"service_tier":            true,
+		"execution_expires_after": true,
+		"generate_audio":          true,
+		"draft":                   true,
+		"watermark":               true,
+		"seed":                    true,
+		"camera_fixed":            true,
+		"tools":                   true,
+		"safety_identifier":       true,
+		"input_reference":         true, // Sora 特有字段
+		"callback_url":            true,
 	}
 	return knownFields[field]
 }
@@ -219,6 +267,6 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		req.Images = []string{req.Image}
 	}
 
-	storeTaskRequest(c, info, action, req)
+	StoreTaskRequest(c, info, action, req)
 	return nil
 }

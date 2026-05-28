@@ -127,7 +127,8 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 		FinishTime: 5678,
 		FailReason: "timeout",
 		PrivateData: TaskPrivateData{
-			ResultURL: "https://example.com/result.mp4",
+			UpstreamTaskID: "cgt-upstream",
+			ResultURL:      "https://example.com/result.mp4",
 		},
 		Data: json.RawMessage(`{"model":"test-model"}`),
 	}
@@ -137,8 +138,66 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.Equal(t, task.StartTime, snap.StartTime)
 	assert.Equal(t, task.FinishTime, snap.FinishTime)
 	assert.Equal(t, task.FailReason, snap.FailReason)
+	assert.Equal(t, task.PrivateData.UpstreamTaskID, snap.UpstreamTaskID)
 	assert.Equal(t, task.PrivateData.ResultURL, snap.ResultURL)
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
+}
+
+func TestGetUpstreamTaskIDFallsBackToStoredData(t *testing.T) {
+	assert.Equal(t, "cgt-flat", (&Task{
+		TaskID: "task_public",
+		Data:   json.RawMessage(`{"id":"cgt-flat"}`),
+	}).GetUpstreamTaskID())
+
+	assert.Equal(t, "cgt-nested", (&Task{
+		TaskID: "task_public",
+		Data:   json.RawMessage(`{"data":{"id":"cgt-nested"}}`),
+	}).GetUpstreamTaskID())
+
+	assert.Equal(t, "cgt-upstream", (&Task{
+		TaskID: "task_public",
+		Data:   json.RawMessage(`{"data":{"id":"task_public","upstream_id":"cgt-upstream"}}`),
+	}).GetUpstreamTaskID())
+
+	assert.Equal(t, "cgt-private", (&Task{
+		TaskID: "task_public",
+		PrivateData: TaskPrivateData{
+			UpstreamTaskID: "cgt-private",
+		},
+		Data: json.RawMessage(`{"id":"cgt-data"}`),
+	}).GetUpstreamTaskID())
+}
+
+func TestGetByUpstreamTaskIdFindsTaskDataID(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_legacy_data",
+		Status: TaskStatusQueued,
+		Data:   json.RawMessage(`{"id":"cgt-legacy-data","status":"queued"}`),
+	}
+	insertTask(t, task)
+
+	found, exist, err := GetByUpstreamTaskId("cgt-legacy-data")
+	require.NoError(t, err)
+	require.True(t, exist)
+	assert.Equal(t, task.TaskID, found.TaskID)
+}
+
+func TestGetByUpstreamTaskIdFindsNestedTaskDataID(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_nested_data",
+		Status: TaskStatusQueued,
+		Data:   json.RawMessage(`{"code":"success","data":{"id":"cgt-nested-data","status":"queued"}}`),
+	}
+	insertTask(t, task)
+
+	found, exist, err := GetByUpstreamTaskId("cgt-nested-data")
+	require.NoError(t, err)
+	require.True(t, exist)
+	assert.Equal(t, task.TaskID, found.TaskID)
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +245,28 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 	var reloaded Task
 	require.NoError(t, DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, TaskStatusFailure, reloaded.Status) // unchanged
+}
+
+func TestUpdatePrivateDataWithStatus_Win(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_private_data_win",
+		Status:   TaskStatusInProgress,
+		Progress: "50%",
+		Data:     json.RawMessage(`{}`),
+	}
+	insertTask(t, task)
+
+	task.PrivateData.LastPollAt = 12345
+	won, err := task.UpdatePrivateDataWithStatus(TaskStatusInProgress)
+	require.NoError(t, err)
+	assert.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
+	assert.Equal(t, int64(12345), reloaded.PrivateData.LastPollAt)
 }
 
 func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {

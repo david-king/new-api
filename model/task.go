@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -100,6 +101,10 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	LastPollAt     int64  `json:"last_poll_at,omitempty"`     // 最近一次上游轮询时间戳，用于渠道级限频
+	CallbackURL    string `json:"callback_url,omitempty"`     // 用户提交的任务结果回调地址
+	CallbackStatus string `json:"callback_status,omitempty"`  // 最近一次成功通知用户的任务状态
+	CallbackAt     int64  `json:"callback_at,omitempty"`      // 最近一次成功通知用户的时间戳
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -112,6 +117,7 @@ type TaskBillingContext struct {
 	ModelPrice      float64            `json:"model_price,omitempty"`       // 模型单价
 	GroupRatio      float64            `json:"group_ratio,omitempty"`       // 分组倍率
 	ModelRatio      float64            `json:"model_ratio,omitempty"`       // 模型倍率
+	CompletionRatio float64            `json:"completion_ratio,omitempty"`  // 补全倍率
 	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
 	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
@@ -120,10 +126,45 @@ type TaskBillingContext struct {
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
 // 旧数据没有 UpstreamTaskID 时，TaskID 本身就是上游 ID
 func (t *Task) GetUpstreamTaskID() string {
+	if t == nil {
+		return ""
+	}
 	if t.PrivateData.UpstreamTaskID != "" {
 		return t.PrivateData.UpstreamTaskID
 	}
+	if upstreamTaskID := extractUpstreamTaskIDFromData(t.Data); upstreamTaskID != "" {
+		return upstreamTaskID
+	}
 	return t.TaskID
+}
+
+func extractUpstreamTaskIDFromData(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	root := map[string]any{}
+	if err := common.Unmarshal(data, &root); err != nil {
+		return ""
+	}
+	keys := []string{"upstream_task_id", "upstream_id", "id", "task_id"}
+	if nested, ok := root["data"].(map[string]any); ok {
+		if value := firstStringFromMap(nested, keys...); value != "" {
+			return value
+		}
+	}
+	return firstStringFromMap(root, keys...)
+}
+
+func firstStringFromMap(m map[string]any, keys ...string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if value, ok := m[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // GetResultURL 获取任务结果 URL（视频地址等）
@@ -328,6 +369,56 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
+func GetByUpstreamTaskId(upstreamTaskId string) (*Task, bool, error) {
+	upstreamTaskId = strings.TrimSpace(upstreamTaskId)
+	if upstreamTaskId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	query := DB.Where("task_id = ?", upstreamTaskId)
+	privateDataCondition := jsonLikeCondition("private_data")
+	for _, pattern := range jsonStringFieldPatterns(upstreamTaskId, "upstream_task_id", "upstream_id") {
+		query = query.Or(privateDataCondition, pattern)
+	}
+	dataCondition := jsonLikeCondition("data")
+	for _, pattern := range jsonStringFieldPatterns(upstreamTaskId, "id", "task_id", "upstream_id", "upstream_task_id") {
+		query = query.Or(dataCondition, pattern)
+	}
+	err := query.Order("id desc").First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, err
+}
+
+func jsonStringFieldPatterns(value string, fields ...string) []string {
+	escapedValue := escapeLikeLiteral(value)
+	patterns := make([]string, 0, len(fields))
+	for _, field := range fields {
+		patterns = append(patterns, "%\""+field+"\":\""+escapedValue+"\"%")
+	}
+	return patterns
+}
+
+func escapeLikeLiteral(value string) string {
+	value = strings.ReplaceAll(value, "!", "!!")
+	value = strings.ReplaceAll(value, "%", "!%")
+	value = strings.ReplaceAll(value, "_", "!_")
+	return value
+}
+
+func jsonLikeCondition(column string) string {
+	switch {
+	case common.UsingPostgreSQL:
+		return column + "::text LIKE ? ESCAPE '!'"
+	case common.UsingMySQL:
+		return "CAST(" + column + " AS CHAR) LIKE ? ESCAPE '!'"
+	default:
+		return "CAST(" + column + " AS TEXT) LIKE ? ESCAPE '!'"
+	}
+}
+
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
@@ -364,13 +455,15 @@ func (Task *Task) Insert() error {
 }
 
 type taskSnapshot struct {
-	Status     TaskStatus
-	Progress   string
-	StartTime  int64
-	FinishTime int64
-	FailReason string
-	ResultURL  string
-	Data       json.RawMessage
+	Status         TaskStatus
+	Progress       string
+	StartTime      int64
+	FinishTime     int64
+	FailReason     string
+	UpstreamTaskID string
+	ResultURL      string
+	LastPollAt     int64
+	Data           json.RawMessage
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
@@ -379,19 +472,23 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.StartTime == other.StartTime &&
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
+		s.UpstreamTaskID == other.UpstreamTaskID &&
 		s.ResultURL == other.ResultURL &&
+		s.LastPollAt == other.LastPollAt &&
 		bytes.Equal(s.Data, other.Data)
 }
 
 func (t *Task) Snapshot() taskSnapshot {
 	return taskSnapshot{
-		Status:     t.Status,
-		Progress:   t.Progress,
-		StartTime:  t.StartTime,
-		FinishTime: t.FinishTime,
-		FailReason: t.FailReason,
-		ResultURL:  t.PrivateData.ResultURL,
-		Data:       t.Data,
+		Status:         t.Status,
+		Progress:       t.Progress,
+		StartTime:      t.StartTime,
+		FinishTime:     t.FinishTime,
+		FailReason:     t.FailReason,
+		UpstreamTaskID: t.PrivateData.UpstreamTaskID,
+		ResultURL:      t.PrivateData.ResultURL,
+		LastPollAt:     t.PrivateData.LastPollAt,
+		Data:           t.Data,
 	}
 }
 
@@ -414,6 +511,33 @@ func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// UpdatePrivateDataWithStatus updates only private_data behind a status guard.
+// It is used for polling metadata, where writing the whole task would be too broad.
+func (t *Task) UpdatePrivateDataWithStatus(fromStatus TaskStatus) (bool, error) {
+	result := DB.Model(t).Where("status = ?", fromStatus).Update("private_data", t.PrivateData)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func MarkTaskCallbackNotified(taskID int64, status TaskStatus, callbackStatus string, callbackAt int64) error {
+	if taskID <= 0 || callbackStatus == "" {
+		return nil
+	}
+	var task Task
+	err := DB.Where("id = ? AND status = ?", taskID, status).First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil || !exist {
+		return err
+	}
+	task.PrivateData.CallbackStatus = callbackStatus
+	task.PrivateData.CallbackAt = callbackAt
+	return DB.Model(&Task{}).
+		Where("id = ? AND status = ?", taskID, status).
+		Update("private_data", task.PrivateData).Error
 }
 
 // TaskBulkUpdate performs an unconditional bulk UPDATE by upstream task_id strings.

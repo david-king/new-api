@@ -3,6 +3,7 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -27,6 +28,84 @@ func UnmarshalMetadata(metadata map[string]any, target any) error {
 		return fmt.Errorf("unmarshal metadata failed: %w", err)
 	}
 	return nil
+}
+
+func MetadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	if v, ok := metadata[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func HasVideoInMetadata(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	return HasVideoInContent(metadata["content"])
+}
+
+func HasVideoInContent(content any) bool {
+	contentSlice, ok := content.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range contentSlice {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if itemMap["type"] == "video_url" {
+			return true
+		}
+		if _, has := itemMap["video_url"]; has {
+			return true
+		}
+	}
+	return false
+}
+
+// Seedance2PriceRatio returns the official Seedance 2.0 token price multiplier
+// relative to the 480p/720p no-video-input price configured as ModelRatio.
+func Seedance2PriceRatio(modelName, resolution string, hasVideoInput bool) (float64, bool) {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	is1080p := resolution == "1080p" || resolution == "1080"
+
+	if isSeedance2FastModel(name) {
+		if hasVideoInput {
+			return 22.0 / 37.0, true
+		}
+		return 1, true
+	}
+	if isSeedance2Model(name) {
+		switch {
+		case is1080p && hasVideoInput:
+			return 31.0 / 46.0, true
+		case is1080p:
+			return 51.0 / 46.0, true
+		case hasVideoInput:
+			return 28.0 / 46.0, true
+		default:
+			return 1, true
+		}
+	}
+	return 1, false
+}
+
+func isSeedance2FastModel(name string) bool {
+	return strings.Contains(name, "doubao-seedance-2.0-fast") ||
+		strings.Contains(name, "doubao-seedance-2-0-fast")
+}
+
+func isSeedance2Model(name string) bool {
+	if isSeedance2FastModel(name) {
+		return false
+	}
+	return strings.Contains(name, "doubao-seedance-2.0") ||
+		strings.Contains(name, "doubao-seedance-2-0")
 }
 
 // DefaultString returns val if non-empty, otherwise fallback.

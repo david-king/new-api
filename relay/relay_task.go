@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -377,9 +376,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/v1/task/get/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
+	// 支持实时查询的渠道：用户 fetch 时直接从上游拉取最新状态
+	if realtimeResp := tryRealtimeFetch(c, originTask, isOpenAIVideoAPI, isTaskAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
 	}
@@ -404,6 +404,18 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
+	if isTaskAPI {
+		respBody, err = common.Marshal(dto.TaskResponse[any]{
+			Code:    "success",
+			Message: "",
+			Data:    service.VideoTaskResultFromTask(originTask),
+		})
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -415,15 +427,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
-// 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
-	channelModel, err := model.GetChannelById(task.ChannelId, true)
+// tryRealtimeFetch 尝试从上游实时拉取任务状态。
+// 仅当渠道类型显式支持实时查询时触发；出错时返回 nil，由调用方回退到本地缓存。
+func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool, isTaskAPI bool) []byte {
+	channelModel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	if !supportsRealtimeTaskFetch(channelModel.Type) {
+		return nil
+	}
+	if channelModel.Type == constant.ChannelTypeZLHub && !isTaskAPI && !isOpenAIVideoAPI {
 		return nil
 	}
 
@@ -455,31 +469,17 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	snap := task.Snapshot()
-
-	// 将上游最新状态更新到 task
-	if ti.Status != "" {
-		task.Status = model.TaskStatus(ti.Status)
-	}
-	if ti.Progress != "" {
-		task.Progress = ti.Progress
-	}
-	if strings.HasPrefix(ti.Url, "data:") {
-		// data: URI — kept in Data, not ResultURL
-	} else if ti.Url != "" {
-		task.PrivateData.ResultURL = ti.Url
-	} else if task.Status == model.TaskStatusSuccess {
-		// No URL from adaptor — construct proxy URL using public task ID
-		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-	}
-
-	if !snap.Equal(task.Snapshot()) {
-		_, _ = task.UpdateWithStatus(snap.Status)
+	if err := service.ApplyVideoTaskResult(c.Request.Context(), adaptor, task, body, ti); err != nil {
+		return nil
 	}
 
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
 	if isOpenAIVideoAPI {
 		return nil
+	}
+	if isTaskAPI {
+		respBody, _ := service.VideoTaskResultResponseBody(task)
+		return respBody
 	}
 
 	// 非 OpenAI Video API: 构建自定义格式响应
@@ -497,6 +497,15 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		Data: out,
 	})
 	return respBody
+}
+
+func supportsRealtimeTaskFetch(channelType int) bool {
+	switch channelType {
+	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeZLHub:
+		return true
+	default:
+		return false
+	}
 }
 
 // detectVideoFormat 从 Gemini/Vertex 原始响应中探测视频格式
@@ -539,6 +548,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	usage, cost := service.TaskUsageAndCost(task.Data)
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -559,6 +569,8 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
+		Usage:      usage,
+		Cost:       cost,
 		Data:       task.Data,
 	}
 }

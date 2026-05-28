@@ -577,7 +577,11 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
+		applyTaskSubmitInitialStatus(task, result.Platform)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
+			task.PrivateData.CallbackURL = service.NormalizeTaskCallbackURL(taskReq.CallbackURL)
+		}
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
@@ -585,6 +589,7 @@ func RelayTask(c *gin.Context) {
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
+			CompletionRatio: relayInfo.PriceData.CompletionRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
@@ -599,6 +604,16 @@ func RelayTask(c *gin.Context) {
 
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
+	}
+}
+
+func applyTaskSubmitInitialStatus(task *model.Task, platform constant.TaskPlatform) {
+	if task == nil {
+		return
+	}
+	if platform == constant.TaskPlatform(fmt.Sprint(constant.ChannelTypeZLHub)) {
+		task.Status = model.TaskStatusQueued
+		task.Progress = "10%"
 	}
 }
 

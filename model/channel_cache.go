@@ -267,3 +267,23 @@ func CacheUpdateChannel(channel *Channel) {
 	channelsIDM[channel.Id] = channel
 	logger.LogDebug(nil, "CacheUpdateChannel after: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
 }
+
+// GetChannelByType 按类型获取第一个启用的渠道
+func GetChannelByType(channelType int) (*Channel, error) {
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		for _, ch := range channelsIDM {
+			if ch.Type == channelType && ch.Status == common.ChannelStatusEnabled {
+				return ch, nil
+			}
+		}
+	}
+	// 缓存未命中或未启用，从数据库查询
+	var channel Channel
+	err := DB.Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).First(&channel).Error
+	if err != nil {
+		return nil, fmt.Errorf("未找到类型 %d 的启用渠道: %w", channelType, err)
+	}
+	return &channel, nil
+}

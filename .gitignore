@@ -17,6 +17,7 @@ one-api
 new-api
 /__debug_bin*
 .DS_Store
+._*
 tiktoken_cache
 .eslintcache
 .gocache
@@ -35,3 +36,5 @@ data/
 .test
 token_estimator_test.go
 skills-lock.json
+new-api-linux
+new-api.tar.gz

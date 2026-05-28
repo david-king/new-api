@@ -189,6 +189,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'Codex (OpenAI OAuth)',
   },
+  {
+    value: 58,
+    color: 'blue',
+    label: 'ZLHub（密钥格式: 视频Key|素材Token，相同则只填一个）',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.
