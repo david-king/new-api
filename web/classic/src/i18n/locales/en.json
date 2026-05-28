@@ -2056,7 +2056,7 @@
     "未测试": "Not tested",
     "未添加附加条件时，仅使用上方 type 进行清理。": "When no additional conditions are added, only the above type is used for pruning.",
     "未登录或登录已过期，请重新登录": "Not logged in or login has expired, please log in again",
-    "未知": "unknown",
+    "未知": "Unknown",
     "未知供应商": "Unknown",
     "未知品牌": "Unknown Brand",
     "未知模型": "Unknown model",
@@ -3848,6 +3848,11 @@
     "默认折叠侧边栏": "Default collapse sidebar",
     "默认测试模型": "Default Test Model",
     "默认用户消息": "Default User Message",
-    "默认补全倍率": "Default completion ratio"
+    "默认补全倍率": "Default completion ratio",
+    "令牌余额查询": "Token Balance Lookup",
+    "无需登录，输入令牌即可查询额度。": "Enter a token to check quota without signing in.",
+    "查询余额": "Query Balance",
+    "请输入令牌": "Please enter a token",
+    "查询失败": "Query failed"
   }
 }

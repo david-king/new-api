@@ -1813,7 +1813,7 @@
     "无生效": "Không có gói đăng ký hiệu lực",
     "无邀请人": "Không có người mời",
     "无限制": "Không giới hạn",
-    "无限额度": "Hạn ngạch không giới hạn",
+    "无限额度": "Hạn mức không giới hạn",
     "日": "ngày",
     "日志导出成功": "Logs exported successfully",
     "日志已下载": "Logs downloaded",
@@ -1980,7 +1980,7 @@
     "未测试": "Chưa kiểm tra",
     "未添加附加条件时，仅使用上方 type 进行清理。": "Khi không thêm điều kiện bổ sung, chỉ sử dụng type ở trên để dọn dẹp.",
     "未登录或登录已过期，请重新登录": "Chưa đăng nhập hoặc đăng nhập đã hết hạn, vui lòng đăng nhập lại",
-    "未知": "không xác định",
+    "未知": "Không xác định",
     "未知供应商": "Không xác định",
     "未知品牌": "Unknown Brand",
     "未知模型": "Mô hình không xác định",
@@ -4236,6 +4236,11 @@
     "默认折叠侧边栏": "Mặc định thu gọn thanh bên",
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "令牌余额查询": "Tra cứu số dư token",
+    "无需登录，输入令牌即可查询额度。": "Nhập token để kiểm tra hạn mức mà không cần đăng nhập.",
+    "查询余额": "Tra cứu số dư",
+    "请输入令牌": "Vui lòng nhập token",
+    "查询失败": "Truy vấn thất bại"
   }
 }

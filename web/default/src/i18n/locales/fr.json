@@ -1780,7 +1780,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Imposer une réponse JSON syntaxiquement valide",
@@ -2366,7 +2366,7 @@
     "Model prices reset successfully": "Prix des modèles réinitialisés avec succès",
     "Model Pricing": "Tarification des modèles",
     "Model pull failed: {{msg}}": "Échec du téléchargement du modèle : {{msg}}",
-    "Model ratio": "Ratio modèle",
+    "Model ratio": "Ratio du modèle",
     "Model ratios": "Ratios de modèle",
     "Model ratios reset successfully": "Ratios des modèles réinitialisés avec succès",
     "Model Regex": "Regex du modèle",
@@ -3133,7 +3133,7 @@
     "QR code is not configured. Please contact support.": "Le code QR n'est pas configuré. Veuillez contacter le support.",
     "Quantity": "Quantité",
     "QuantumNous": "QuantumNous",
-    "Query Balance": "Solde des requêtes",
+    "Query Balance": "Consulter le solde",
     "Query Param": "Paramètre de requête",
     "Querying...": "Recherche en cours...",
     "Question": "Question",
@@ -4540,6 +4540,15 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Token Balance Lookup": "Consultation du solde du jeton",
+    "Paste an API key to check its quota without signing in.": "Collez une clé API pour vérifier son quota sans vous connecter.",
+    "Enter API key": "Saisir la clé API",
+    "Please enter an API key": "Veuillez saisir une clé API",
+    "Check Balance": "Vérifier le solde",
+    "Checking...": "Vérification...",
+    "Used quota": "Quota utilisé",
+    "Total quota": "Quota total",
+    "Expires at": "Expire le"
   }
 }

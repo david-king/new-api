@@ -215,7 +215,9 @@ function isLikelyUntranslated({ locale, baseValue, value }) {
 async function main() {
   const entries = await fs.readdir(LOCALES_DIR, { withFileTypes: true })
   const localeFiles = entries
-    .filter((e) => e.isFile() && e.name.endsWith('.json'))
+    .filter(
+      (e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('._')
+    )
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b))
 
@@ -312,9 +314,6 @@ async function main() {
 }
 
 main().catch((err) => {
-   
   console.error(err)
   process.exitCode = 1
 })
-
-

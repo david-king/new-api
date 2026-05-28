@@ -1780,7 +1780,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "構文的に有効な JSON 応答を強制",
@@ -3133,7 +3133,7 @@
     "QR code is not configured. Please contact support.": "QRコードが設定されていません。サポートにお問い合わせください。",
     "Quantity": "数量",
     "QuantumNous": "QuantumNous",
-    "Query Balance": "クエリ残高",
+    "Query Balance": "残高を照会",
     "Query Param": "クエリパラメータ",
     "Querying...": "クエリ中...",
     "Question": "質問",
@@ -4540,6 +4540,15 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Token Balance Lookup": "トークン残高照会",
+    "Paste an API key to check its quota without signing in.": "サインインせずに API キーを貼り付けてクォータを確認できます。",
+    "Enter API key": "API キーを入力",
+    "Please enter an API key": "API キーを入力してください",
+    "Check Balance": "残高を確認",
+    "Checking...": "確認中...",
+    "Used quota": "使用済みクォータ",
+    "Total quota": "総クォータ",
+    "Expires at": "有効期限"
   }
 }

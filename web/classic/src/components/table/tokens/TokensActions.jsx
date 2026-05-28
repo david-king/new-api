@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState } from 'react';
-import { Button, Space } from '@douyinfe/semi-ui';
+import { Button } from '@douyinfe/semi-ui';
 import { showError } from '../../../helpers';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
@@ -74,6 +74,17 @@ const TokensActions = ({
           size='small'
         >
           {t('添加令牌')}
+        </Button>
+
+        <Button
+          type='tertiary'
+          className='flex-1 md:flex-initial'
+          onClick={() => {
+            window.location.href = '/token-balance';
+          }}
+          size='small'
+        >
+          {t('查询余额')}
         </Button>
 
         <Button

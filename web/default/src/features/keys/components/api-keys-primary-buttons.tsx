@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus } from 'lucide-react'
+import { Plus, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useApiKeys } from './api-keys-provider'
@@ -26,6 +26,16 @@ export function ApiKeysPrimaryButtons() {
   const { setOpen } = useApiKeys()
   return (
     <div className='flex gap-2'>
+      <Button
+        size='sm'
+        variant='outline'
+        onClick={() => {
+          window.location.href = '/token-balance'
+        }}
+      >
+        <WalletCards className='h-4 w-4' />
+        {t('Query Balance')}
+      </Button>
       <Button size='sm' onClick={() => setOpen('create')}>
         <Plus className='h-4 w-4' />
         {t('Create API Key')}

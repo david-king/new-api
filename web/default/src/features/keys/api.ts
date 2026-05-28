@@ -24,6 +24,7 @@ import type {
   GetApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
+  TokenBalanceInfo,
 } from './types'
 
 // ============================================================================
@@ -113,5 +114,12 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   data?: { keys: Record<number, string> }
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
+  return res.data
+}
+
+export async function queryTokenBalance(
+  token: string
+): Promise<ApiResponse<TokenBalanceInfo>> {
+  const res = await api.post('/api/token/search', { token })
   return res.data
 }

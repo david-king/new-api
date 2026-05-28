@@ -2110,7 +2110,7 @@
     "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}": "Prix du modèle : {{symbol}}{{price}} * {{ratioType}} : {{ratio}} = {{symbol}}{{total}}",
     "模型价格：{{symbol}}{{price}} / 次": "Prix du modèle : {{symbol}}{{price}} / requête",
     "模型价格未配置": "Prix du modèle non configuré",
-    "模型倍率": "Ratio",
+    "模型倍率": "Ratio du modèle",
     "模型倍率 {{modelRatio}}": "Ratio du modèle {{modelRatio}}",
     "模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}": "Ratio du modèle {{modelRatio}}, ratio de cache {{cacheRatio}}, ratio de complétion {{completionRatio}}, {{ratioType}} {{ratio}}",
     "模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次": "Ratio du modèle {{modelRatio}}, ratio de cache {{cacheRatio}}, ratio de complétion {{completionRatio}}, {{ratioType}} {{ratio}}, appels de recherche Web {{webSearchCallCount}} fois",
@@ -3703,6 +3703,11 @@
     "默认折叠侧边栏": "Réduire la barre latérale par défaut",
     "默认测试模型": "Modèle de test par défaut",
     "默认用户消息": "Bonjour",
-    "默认补全倍率": "Taux de complétion par défaut"
+    "默认补全倍率": "Taux de complétion par défaut",
+    "令牌余额查询": "Consultation du solde du jeton",
+    "无需登录，输入令牌即可查询额度。": "Saisissez un jeton pour vérifier le quota sans connexion.",
+    "查询余额": "Consulter le solde",
+    "请输入令牌": "Veuillez saisir un jeton",
+    "查询失败": "Échec de la requête"
   }
 }
