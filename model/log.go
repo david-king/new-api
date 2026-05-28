@@ -37,6 +37,7 @@ type Log struct {
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
 	Content           string `json:"content"`
+	UserInput         string `json:"user_input" gorm:"type:text;comment:用户输入内容"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
 	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
@@ -69,6 +70,7 @@ const (
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].UserInput = ""
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
@@ -202,6 +204,11 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	gopool.Go(func() {
+		if recordErr := RecordUsageStatistics(tokenId, tokenName, modelName, 0, 0, 0, false); recordErr != nil {
+			common.SysLog("failed to record usage statistics: " + recordErr.Error())
+		}
+	})
 }
 
 type RecordConsumeLogParams struct {
@@ -212,6 +219,7 @@ type RecordConsumeLogParams struct {
 	TokenName        string                 `json:"token_name"`
 	Quota            int                    `json:"quota"`
 	Content          string                 `json:"content"`
+	UserInput        string                 `json:"user_input"`
 	TokenId          int                    `json:"token_id"`
 	UseTimeSeconds   int                    `json:"use_time_seconds"`
 	IsStream         bool                   `json:"is_stream"`
@@ -241,6 +249,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		CreatedAt:        common.GetTimestamp(),
 		Type:             LogTypeConsume,
 		Content:          params.Content,
+		UserInput:        params.UserInput,
 		PromptTokens:     params.PromptTokens,
 		CompletionTokens: params.CompletionTokens,
 		TokenName:        params.TokenName,
@@ -265,6 +274,11 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	gopool.Go(func() {
+		if recordErr := RecordUsageStatistics(params.TokenId, params.TokenName, params.ModelName, params.PromptTokens, params.CompletionTokens, params.Quota, true); recordErr != nil {
+			common.SysLog("failed to record usage statistics: " + recordErr.Error())
+		}
+	})
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)

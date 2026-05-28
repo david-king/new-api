@@ -669,6 +669,31 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
+            {/* Request content (admin only) */}
+            {props.isAdmin && props.log.user_input && (
+              <DetailSection label={t('Request Content')}>
+                <div className='relative min-w-0'>
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='absolute top-0 right-0 h-5 w-5 p-0'
+                    onClick={() => copyToClipboard(props.log.user_input)}
+                    title={t('Copy to clipboard')}
+                    aria-label={t('Copy to clipboard')}
+                  >
+                    {copiedText === props.log.user_input ? (
+                      <Check className='size-3 text-green-600' />
+                    ) : (
+                      <Copy className='size-3' />
+                    )}
+                  </Button>
+                  <p className='min-w-0 pr-6 text-xs leading-relaxed break-all whitespace-pre-wrap sm:break-words'>
+                    {props.log.user_input}
+                  </p>
+                </div>
+              </DetailSection>
+            )}
+
             {/* Violation fee info */}
             {isViolation && other && (
               <DetailSection

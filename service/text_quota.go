@@ -68,6 +68,85 @@ func cacheWriteTokensTotal(summary textQuotaSummary) int {
 	return summary.CacheCreationTokens
 }
 
+func isRequestContentCodeLike(content string) bool {
+	codeKeywords := []string{
+		"VSCode Open Tabs",
+		"Current Time",
+		"Current Cost",
+		"Current Mode",
+		"REMINDERS",
+		"VSCode Visible Files",
+	}
+	for _, keyword := range codeKeywords {
+		if strings.Contains(content, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeLoggedUserInput(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" || isRequestContentCodeLike(content) {
+		return ""
+	}
+	const maxRunes = 4000
+	runes := []rune(content)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes])
+	}
+	return content
+}
+
+func stringifyRequestInput(input any) string {
+	switch v := input.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []string:
+		return strings.Join(v, "\n")
+	default:
+		return common.GetJsonString(v)
+	}
+}
+
+func extractUserInputFromMessages(messages []dto.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Role != "user" {
+			continue
+		}
+		if input := normalizeLoggedUserInput(message.StringContent()); input != "" {
+			return input
+		}
+	}
+	if len(messages) == 0 {
+		return ""
+	}
+	return normalizeLoggedUserInput(messages[len(messages)-1].StringContent())
+}
+
+func extractLoggedUserInput(request dto.Request) string {
+	if !common.LogUserInputEnabled || request == nil {
+		return ""
+	}
+	switch r := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if input := extractUserInputFromMessages(r.Messages); input != "" {
+			return input
+		}
+		if input := normalizeLoggedUserInput(stringifyRequestInput(r.Prompt)); input != "" {
+			return input
+		}
+		return normalizeLoggedUserInput(stringifyRequestInput(r.Input))
+	case *dto.OpenAIResponsesRequest:
+		return normalizeLoggedUserInput(stringifyRequestInput(r.Input))
+	default:
+		return ""
+	}
+}
+
 func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) bool {
 	if relayInfo == nil || usage == nil {
 		return false
@@ -467,6 +546,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		TokenName:        summary.TokenName,
 		Quota:            summary.Quota,
 		Content:          logContent,
+		UserInput:        extractLoggedUserInput(relayInfo.Request),
 		TokenId:          relayInfo.TokenId,
 		UseTimeSeconds:   int(summary.UseTimeSeconds),
 		IsStream:         relayInfo.IsStream,

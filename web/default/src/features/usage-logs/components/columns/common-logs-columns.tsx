@@ -523,6 +523,40 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
     size: 160,
   })
 
+  if (isAdmin) {
+    columns.push({
+      accessorKey: 'user_input',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Request Content')} />
+      ),
+      cell: ({ row }) => {
+        const log = row.original
+        if (![2, 5].includes(log.type)) return null
+        if (!log.user_input) {
+          return <span className='text-muted-foreground/40 text-xs'>—</span>
+        }
+        return (
+          <TooltipProvider delay={300}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className='line-clamp-2 max-w-[220px] cursor-help text-xs leading-relaxed break-words' />
+                }
+              >
+                {log.user_input}
+              </TooltipTrigger>
+              <TooltipContent className='max-w-sm whitespace-pre-wrap'>
+                {log.user_input}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
+      },
+      meta: { label: t('Request Content') },
+      size: 220,
+    })
+  }
+
   columns.push(
     {
       accessorKey: 'model_name',
@@ -752,7 +786,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
         return (
           <div className='flex flex-col gap-0.5'>
-            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 text-sm leading-none [font-family:var(--font-body)] font-semibold tabular-nums'>
+            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
               {quotaDisplay.prefix && (
                 <span className='mr-1'>{quotaDisplay.prefix}</span>
               )}

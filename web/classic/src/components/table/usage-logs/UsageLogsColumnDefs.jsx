@@ -144,10 +144,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [
-    t('流状态') + '：' + t('异常'),
-    (ss.end_reason || 'unknown'),
-  ];
+  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -185,11 +182,7 @@ function renderIsStream(bool, t, streamStatus) {
                 userSelect: 'none',
               }}
             >
-              <CircleAlert
-                size={14}
-                strokeWidth={2.5}
-                color='currentColor'
-              />
+              <CircleAlert size={14} strokeWidth={2.5} color='currentColor' />
             </span>
           </Tooltip>
         )}
@@ -461,7 +454,11 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
-  const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
+  const summaryOpts = {
+    ...other,
+    displayMode: billingDisplayMode,
+    outputMode: 'segments',
+  };
 
   if (other?.billing_mode === 'tiered_expr') {
     return { segments: renderTieredModelPriceSimple(summaryOpts) };
@@ -691,6 +688,38 @@ export const getLogsColumns = ({
           <>{renderModelName(record, copyText, t)}</>
         ) : (
           <></>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.USER_INPUT,
+      title: t('请求内容'),
+      dataIndex: 'user_input',
+      render: (text, record) => {
+        if (!isAdminUser || (record.type !== 2 && record.type !== 5)) {
+          return <></>;
+        }
+        if (!text || text.trim() === '') {
+          return (
+            <Tag color='grey' shape='circle'>
+              {t('无')}
+            </Tag>
+          );
+        }
+        return (
+          <Typography.Paragraph
+            ellipsis={{
+              rows: 2,
+              showTooltip: {
+                type: 'popover',
+                opts: { style: { width: 360 } },
+              },
+            }}
+            style={{ maxWidth: 220, marginBottom: 0, cursor: 'pointer' }}
+            onClick={(event) => copyText(event, text)}
+          >
+            {text}
+          </Typography.Paragraph>
         );
       },
     },
