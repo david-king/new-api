@@ -66,6 +66,8 @@ function DynamicOAuth2Callback() {
 function App() {
   const location = useLocation();
   const [statusState] = useContext(StatusContext);
+  const tokenBalanceEnabled =
+    statusState?.status?.token_balance_enabled !== false;
 
   // 获取模型广场权限配置
   const pricingRequireAuth = useMemo(() => {
@@ -152,9 +154,13 @@ function App() {
         <Route
           path='/token-balance'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <TokenBalance />
-            </Suspense>
+            tokenBalanceEnabled ? (
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TokenBalance />
+              </Suspense>
+            ) : (
+              <Forbidden />
+            )
           }
         />
         <Route

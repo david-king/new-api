@@ -47,8 +47,10 @@ import {
 } from './config'
 
 const headerNavSchema = z.object({
+  tokenBalanceEnabled: z.boolean(),
   home: z.boolean(),
   console: z.boolean(),
+  tokenBalance: z.boolean(),
   pricingEnabled: z.boolean(),
   pricingRequireAuth: z.boolean(),
   rankingsEnabled: z.boolean(),
@@ -62,15 +64,24 @@ type HeaderNavFormValues = z.infer<typeof headerNavSchema>
 type HeaderNavigationSectionProps = {
   config: HeaderNavModulesConfig
   initialSerialized: string
+  tokenBalanceEnabled: boolean
 }
 
-const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
+const toFormValues = (
+  config: HeaderNavModulesConfig,
+  tokenBalanceEnabled: boolean
+): HeaderNavFormValues => ({
+  tokenBalanceEnabled,
   home:
     config.home === undefined ? HEADER_NAV_DEFAULT.home : Boolean(config.home),
   console:
     config.console === undefined
       ? HEADER_NAV_DEFAULT.console
       : Boolean(config.console),
+  tokenBalance:
+    config.tokenBalance === undefined
+      ? HEADER_NAV_DEFAULT.tokenBalance
+      : Boolean(config.tokenBalance),
   pricingEnabled:
     config.pricing?.enabled === undefined
       ? HEADER_NAV_DEFAULT.pricing.enabled
@@ -98,10 +109,14 @@ const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
 export function HeaderNavigationSection({
   config,
   initialSerialized,
+  tokenBalanceEnabled,
 }: HeaderNavigationSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const formDefaults = useMemo(() => toFormValues(config), [config])
+  const formDefaults = useMemo(
+    () => toFormValues(config, tokenBalanceEnabled),
+    [config, tokenBalanceEnabled]
+  )
 
   const form = useForm<HeaderNavFormValues>({
     resolver: zodResolver(headerNavSchema),
@@ -117,6 +132,7 @@ export function HeaderNavigationSection({
       ...config,
       home: values.home,
       console: values.console,
+      tokenBalance: values.tokenBalance,
       docs: values.docs,
       about: values.about,
       pricing: {
@@ -132,18 +148,23 @@ export function HeaderNavigationSection({
     }
 
     const serialized = serializeHeaderNavModules(payload)
-    if (serialized === initialSerialized) {
-      return
+    if (serialized !== initialSerialized) {
+      await updateOption.mutateAsync({
+        key: 'HeaderNavModules',
+        value: serialized,
+      })
     }
 
-    await updateOption.mutateAsync({
-      key: 'HeaderNavModules',
-      value: serialized,
-    })
+    if (values.tokenBalanceEnabled !== tokenBalanceEnabled) {
+      await updateOption.mutateAsync({
+        key: 'TokenBalanceEnabled',
+        value: values.tokenBalanceEnabled,
+      })
+    }
   }
 
   const resetToDefault = () => {
-    form.reset(toFormValues(HEADER_NAV_DEFAULT))
+    form.reset(toFormValues(HEADER_NAV_DEFAULT, true))
   }
 
   const simpleModules: Array<{
@@ -155,6 +176,11 @@ export function HeaderNavigationSection({
       key: 'home',
       title: t('Home'),
       description: t('Landing page with system overview.'),
+    },
+    {
+      key: 'tokenBalance',
+      title: t('Token Balance Lookup'),
+      description: t('Show token balance lookup in the header.'),
     },
     {
       key: 'console',
@@ -217,6 +243,31 @@ export function HeaderNavigationSection({
             resetLabel='Reset to default'
             saveLabel='Save navigation'
           />
+          <SettingsControlGroup>
+            <FormField
+              control={form.control}
+              name='tokenBalanceEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Enable token balance lookup')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Allow visitors to check an API key quota without signing in.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </SettingsSwitchItem>
+              )}
+            />
+          </SettingsControlGroup>
           <div className='grid gap-4 md:grid-cols-2'>
             {simpleModules.map((module) => (
               <FormField
@@ -233,6 +284,10 @@ export function HeaderNavigationSection({
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
+                        disabled={
+                          module.key === 'tokenBalance' &&
+                          !form.watch('tokenBalanceEnabled')
+                        }
                       />
                     </FormControl>
                     <FormMessage />

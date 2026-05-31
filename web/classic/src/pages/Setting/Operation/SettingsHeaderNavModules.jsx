@@ -42,6 +42,7 @@ export default function SettingsHeaderNavModules(props) {
   const [headerNavModules, setHeaderNavModules] = useState({
     home: true,
     console: true,
+    tokenBalance: true,
     pricing: {
       enabled: true,
       requireAuth: false, // 默认不需要登录鉴权
@@ -49,6 +50,7 @@ export default function SettingsHeaderNavModules(props) {
     docs: true,
     about: true,
   });
+  const [tokenBalanceEnabled, setTokenBalanceEnabled] = useState(true);
 
   // 处理顶栏模块配置变更
   function handleHeaderNavModuleChange(moduleKey) {
@@ -82,6 +84,7 @@ export default function SettingsHeaderNavModules(props) {
     const defaultModules = {
       home: true,
       console: true,
+      tokenBalance: true,
       pricing: {
         enabled: true,
         requireAuth: false,
@@ -90,6 +93,7 @@ export default function SettingsHeaderNavModules(props) {
       about: true,
     };
     setHeaderNavModules(defaultModules);
+    setTokenBalanceEnabled(true);
     showSuccess(t('已重置为默认配置'));
   }
 
@@ -103,6 +107,15 @@ export default function SettingsHeaderNavModules(props) {
       });
       const { success, message } = res.data;
       if (success) {
+        const balanceRes = await API.put('/api/option/', {
+          key: 'TokenBalanceEnabled',
+          value: tokenBalanceEnabled,
+        });
+        if (!balanceRes.data.success) {
+          showError(balanceRes.data.message);
+          return;
+        }
+
         showSuccess(t('保存成功'));
 
         // 立即更新StatusContext中的状态
@@ -111,6 +124,7 @@ export default function SettingsHeaderNavModules(props) {
           payload: {
             ...statusState.status,
             HeaderNavModules: JSON.stringify(headerNavModules),
+            token_balance_enabled: tokenBalanceEnabled,
           },
         });
 
@@ -141,6 +155,9 @@ export default function SettingsHeaderNavModules(props) {
             requireAuth: false, // 默认不需要登录鉴权
           };
         }
+        if (modules.tokenBalance === undefined) {
+          modules.tokenBalance = true;
+        }
 
         setHeaderNavModules(modules);
       } catch (error) {
@@ -148,6 +165,7 @@ export default function SettingsHeaderNavModules(props) {
         const defaultModules = {
           home: true,
           console: true,
+          tokenBalance: true,
           pricing: {
             enabled: true,
             requireAuth: false,
@@ -157,6 +175,11 @@ export default function SettingsHeaderNavModules(props) {
         };
         setHeaderNavModules(defaultModules);
       }
+    }
+    if (props.options && props.options.TokenBalanceEnabled !== undefined) {
+      setTokenBalanceEnabled(
+        String(props.options.TokenBalanceEnabled).toLowerCase() !== 'false',
+      );
     }
   }, [props.options]);
 
@@ -171,6 +194,11 @@ export default function SettingsHeaderNavModules(props) {
       key: 'console',
       title: t('控制台'),
       description: t('用户控制面板，管理账户'),
+    },
+    {
+      key: 'tokenBalance',
+      title: t('令牌余额查询'),
+      description: t('在顶栏显示公开的令牌余额查询入口'),
     },
     {
       key: 'pricing',
@@ -197,6 +225,60 @@ export default function SettingsHeaderNavModules(props) {
         extraText={t('控制顶栏模块显示状态，全局生效')}
       >
         <Row gutter={[16, 16]} style={{ marginBottom: '24px' }}>
+          <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+            <Card
+              style={{
+                borderRadius: '8px',
+                border: '1px solid var(--semi-color-border)',
+                transition: 'all 0.2s ease',
+                background: 'var(--semi-color-bg-1)',
+                minHeight: '80px',
+              }}
+              bodyStyle={{ padding: '16px' }}
+              hoverable
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  height: '100%',
+                }}
+              >
+                <div style={{ flex: 1, textAlign: 'left' }}>
+                  <div
+                    style={{
+                      fontWeight: '600',
+                      fontSize: '14px',
+                      color: 'var(--semi-color-text-0)',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    {t('启用令牌余额查询')}
+                  </div>
+                  <Text
+                    type='secondary'
+                    size='small'
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--semi-color-text-2)',
+                      lineHeight: '1.4',
+                      display: 'block',
+                    }}
+                  >
+                    {t('允许访客无需登录即可通过令牌查询额度')}
+                  </Text>
+                </div>
+                <div style={{ marginLeft: '16px' }}>
+                  <Switch
+                    checked={tokenBalanceEnabled}
+                    onChange={setTokenBalanceEnabled}
+                    size='default'
+                  />
+                </div>
+              </div>
+            </Card>
+          </Col>
           {moduleConfigs.map((module) => (
             <Col key={module.key} xs={24} sm={12} md={6} lg={6} xl={6}>
               <Card
@@ -250,6 +332,9 @@ export default function SettingsHeaderNavModules(props) {
                           : headerNavModules[module.key]
                       }
                       onChange={handleHeaderNavModuleChange(module.key)}
+                      disabled={
+                        module.key === 'tokenBalance' && !tokenBalanceEnabled
+                      }
                       size='default'
                     />
                   </div>

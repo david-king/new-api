@@ -539,3 +539,24 @@ func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 		t.Fatalf("unauthorized key response leaked raw token key: %s", unauthorizedRecorder.Body.String())
 	}
 }
+
+func TestSearchTokenByTokenDisabled(t *testing.T) {
+	original := common.TokenBalanceEnabled
+	common.TokenBalanceEnabled = false
+	t.Cleanup(func() {
+		common.TokenBalanceEnabled = original
+	})
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/search", map[string]any{
+		"token": "sk-disabled",
+	}, 0)
+	SearchTokenByToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if response.Success {
+		t.Fatalf("expected disabled token balance lookup to fail")
+	}
+	if !strings.Contains(response.Message, "关闭") {
+		t.Fatalf("expected disabled message, got %q", response.Message)
+	}
+}

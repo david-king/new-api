@@ -21,6 +21,7 @@ import { Search, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { useStatus } from '@/hooks/use-status'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -42,12 +43,19 @@ function BalanceRow(props: { label: string; value: React.ReactNode }) {
 
 export function TokenBalanceLookup() {
   const { t } = useTranslation()
+  const { status: systemStatus } = useStatus()
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<TokenBalanceInfo | null>(null)
+  const tokenBalanceEnabled = systemStatus?.token_balance_enabled !== false
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!tokenBalanceEnabled) {
+      toast.error(t('Token balance lookup is disabled.'))
+      return
+    }
+
     const trimmed = token.trim()
     if (!trimmed) {
       toast.error(t('Please enter an API key'))
@@ -71,7 +79,7 @@ export function TokenBalanceLookup() {
     }
   }
 
-  const status = result ? API_KEY_STATUSES[result.status] : undefined
+  const tokenStatus = result ? API_KEY_STATUSES[result.status] : undefined
   const totalQuota = result
     ? Number(result.remain_quota || 0) + Number(result.used_quota || 0)
     : 0
@@ -103,12 +111,22 @@ export function TokenBalanceLookup() {
                 onChange={(event) => setToken(event.target.value)}
                 placeholder={t('Enter API key')}
                 autoComplete='off'
+                disabled={!tokenBalanceEnabled}
               />
-              <Button type='submit' disabled={loading} className='sm:w-36'>
+              <Button
+                type='submit'
+                disabled={loading || !tokenBalanceEnabled}
+                className='sm:w-36'
+              >
                 <Search className='h-4 w-4' />
                 {loading ? t('Checking...') : t('Check Balance')}
               </Button>
             </div>
+            {!tokenBalanceEnabled && (
+              <p className='text-muted-foreground text-sm'>
+                {t('Token balance lookup is disabled.')}
+              </p>
+            )}
           </div>
         </form>
 
@@ -118,10 +136,10 @@ export function TokenBalanceLookup() {
             <BalanceRow
               label={t('Status')}
               value={
-                status ? (
+                tokenStatus ? (
                   <StatusBadge
-                    label={t(status.label)}
-                    variant={status.variant}
+                    label={t(tokenStatus.label)}
+                    variant={tokenStatus.variant}
                     copyable={false}
                   />
                 ) : (
