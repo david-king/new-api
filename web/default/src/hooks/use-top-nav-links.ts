@@ -71,6 +71,14 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Console'), href: '/dashboard' })
   }
 
+  // Public token balance lookup
+  if (
+    modules?.tokenBalance !== false &&
+    status?.token_balance_enabled !== false
+  ) {
+    links.push({ title: t('Token Balance Lookup'), href: '/token-balance' })
+  }
+
   // Pricing
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {

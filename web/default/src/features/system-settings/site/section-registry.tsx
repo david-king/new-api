@@ -70,6 +70,7 @@ const SITE_SECTIONS = [
         <HeaderNavigationSection
           config={headerNavConfig}
           initialSerialized={headerNavSerialized}
+          tokenBalanceEnabled={settings.TokenBalanceEnabled}
         />
       )
     },

@@ -571,6 +571,17 @@ html.dark .sbg-variant-green {
   background: transparent;
 }
 
+.usage-statistics-table .semi-table-container,
+.usage-statistics-table .semi-table-header,
+.usage-statistics-table .semi-table-body {
+  width: 100%;
+}
+
+.usage-statistics-table .semi-table-header table,
+.usage-statistics-table .semi-table-body table {
+  min-width: 100%;
+}
+
 /* 侧边抽屉滚动条样式 */
 .semi-sidesheet-body::-webkit-scrollbar {
   width: 6px;

@@ -79,17 +79,6 @@ const TokensActions = ({
         <Button
           type='tertiary'
           className='flex-1 md:flex-initial'
-          onClick={() => {
-            window.location.href = '/token-balance';
-          }}
-          size='small'
-        >
-          {t('查询余额')}
-        </Button>
-
-        <Button
-          type='tertiary'
-          className='flex-1 md:flex-initial'
           onClick={handleCopySelectedTokens}
           size='small'
         >

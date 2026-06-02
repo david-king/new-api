@@ -38,6 +38,14 @@ func normalizeTokenSearchKey(token string) string {
 }
 
 func SearchTokenByToken(c *gin.Context) {
+	if !common.TokenBalanceEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "令牌余额查询功能已关闭",
+		})
+		return
+	}
+
 	var req TokenSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)

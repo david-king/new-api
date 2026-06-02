@@ -418,7 +418,8 @@ const UsageStatistics = () => {
           scroll={compactMode ? undefined : { x: 'max-content' }}
           pagination={false}
           hidePagination
-          className='rounded-xl overflow-hidden'
+          className='usage-statistics-table rounded-xl overflow-hidden'
+          style={{ width: '100%' }}
           size='small'
           empty={
             <Empty

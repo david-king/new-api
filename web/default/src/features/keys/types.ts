@@ -94,16 +94,6 @@ export interface ApiKeyFormData {
   cross_group_retry: boolean
 }
 
-export interface TokenBalanceInfo {
-  token_name: string
-  remain_quota: number
-  used_quota: number
-  unlimited_quota: boolean
-  expired_time: number
-  status: number
-  model_ratio: number
-}
-
 // ============================================================================
 // Dialog Types
 // ============================================================================

@@ -70,6 +70,7 @@ const PageLayout = () => {
     location.pathname !== '/console/playground';
 
   const isConsoleRoute = location.pathname.startsWith('/console');
+  const isStandaloneRoute = location.pathname === '/token-balance';
   const showSider = isConsoleRoute && (!isMobile || drawerOpen);
   const isFixedLayout = isConsoleRoute || location.pathname === '/pricing';
 
@@ -144,6 +145,29 @@ const PageLayout = () => {
       }
     }
   }, [i18n, userState?.user?.setting]);
+
+  if (isStandaloneRoute) {
+    return (
+      <Layout
+        className='app-layout'
+        style={{
+          minHeight: '100vh',
+          overflow: 'auto',
+        }}
+      >
+        <Content
+          style={{
+            minHeight: '100vh',
+          }}
+        >
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
+        </Content>
+        <ToastContainer />
+      </Layout>
+    );
+  }
 
   return (
     <Layout
