@@ -21,18 +21,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, showError } from '../../helpers';
 import { renderQuota } from '../../helpers/render';
-import {
-  Button,
-  Card,
-  Descriptions,
-  Form,
-  Space,
-  Tag,
-  Typography,
-} from '@douyinfe/semi-ui';
-import { IconCreditCard } from '@douyinfe/semi-icons';
-
-const { Title, Text } = Typography;
+import { Button, Descriptions, Input, Tag } from '@douyinfe/semi-ui';
 
 const statusColor = {
   1: 'green',
@@ -55,19 +44,21 @@ const formatExpiredTime = (expiredTime, t) => {
 
 const TokenBalance = () => {
   const { t } = useTranslation();
+  const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
-  const handleSubmit = async (values) => {
-    const token = String(values.token || '').trim();
-    if (!token) {
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmed = token.trim();
+    if (!trimmed) {
       showError(t('请输入令牌'));
       return;
     }
 
     setLoading(true);
     try {
-      const res = await API.post('/api/token/search', { token });
+      const res = await API.post('/api/token/search', { token: trimmed });
       const { success, message, data } = res.data;
       if (success) {
         setResult(data);
@@ -121,33 +112,20 @@ const TokenBalance = () => {
 
   return (
     <div className='min-h-screen flex items-center justify-center px-4 py-8'>
-      <div className='w-full max-w-2xl'>
-        <div className='flex items-center gap-3 mb-4'>
-          <IconCreditCard size='extra-large' />
-          <div>
-            <Title heading={3} className='!mb-1'>
-              {t('令牌余额查询')}
-            </Title>
-            <Text type='tertiary'>{t('无需登录，输入令牌即可查询额度。')}</Text>
-          </div>
+      <form className='w-full max-w-xl' onSubmit={handleSubmit}>
+        <div className='flex flex-col sm:flex-row gap-2'>
+          <Input
+            value={token}
+            onChange={setToken}
+            placeholder={t('请输入令牌')}
+            showClear
+          />
+          <Button htmlType='submit' type='primary' loading={loading}>
+            {t('查询余额')}
+          </Button>
         </div>
-        <Card>
-          <Form onSubmit={handleSubmit}>
-            <Form.Input
-              field='token'
-              label={t('令牌')}
-              placeholder={t('请输入令牌')}
-              showClear
-            />
-            <Space vertical align='start' className='w-full'>
-              <Button htmlType='submit' type='primary' loading={loading}>
-                {t('查询余额')}
-              </Button>
-              {result && <Descriptions data={rows} />}
-            </Space>
-          </Form>
-        </Card>
-      </div>
+        {result && <Descriptions className='mt-4' data={rows} />}
+      </form>
     </div>
   );
 };

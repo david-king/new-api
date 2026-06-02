@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import { Search, WalletCards } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
@@ -26,9 +26,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusBadge } from '@/components/status-badge'
-import { queryTokenBalance } from '../api'
-import { API_KEY_STATUSES, ERROR_MESSAGES } from '../constants'
-import { type TokenBalanceInfo } from '../types'
+import { queryTokenBalance } from './api'
+import { TOKEN_STATUS_BADGES } from './constants'
+import { type TokenBalanceInfo } from './types'
 
 function BalanceRow(props: { label: string; value: React.ReactNode }) {
   return (
@@ -41,7 +41,7 @@ function BalanceRow(props: { label: string; value: React.ReactNode }) {
   )
 }
 
-export function TokenBalanceLookup() {
+export function TokenBalance() {
   const { t } = useTranslation()
   const { status: systemStatus } = useStatus()
   const [token, setToken] = useState('')
@@ -69,69 +69,55 @@ export function TokenBalanceLookup() {
         setResult(res.data)
       } else {
         setResult(null)
-        toast.error(res.message || t(ERROR_MESSAGES.UNEXPECTED))
+        toast.error(res.message || t('An unexpected error occurred'))
       }
     } catch {
       setResult(null)
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+      toast.error(t('An unexpected error occurred'))
     } finally {
       setLoading(false)
     }
   }
 
-  const tokenStatus = result ? API_KEY_STATUSES[result.status] : undefined
+  const tokenStatus = result ? TOKEN_STATUS_BADGES[result.status] : undefined
   const totalQuota = result
     ? Number(result.remain_quota || 0) + Number(result.used_quota || 0)
     : 0
 
   return (
     <main className='bg-background min-h-screen'>
-      <div className='mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center px-4 py-10 sm:px-6'>
-        <div className='mb-6 flex items-center gap-3'>
-          <div className='bg-primary/10 text-primary flex h-10 w-10 items-center justify-center rounded-md'>
-            <WalletCards className='h-5 w-5' />
+      <div className='mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-4 py-10 sm:px-6'>
+        <form onSubmit={handleSubmit}>
+          <Label className='sr-only' htmlFor='token-balance-key'>
+            {t('API Key')}
+          </Label>
+          <div className='flex flex-col gap-2 sm:flex-row'>
+            <Input
+              id='token-balance-key'
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder={t('Enter API key')}
+              autoComplete='off'
+              disabled={!tokenBalanceEnabled}
+            />
+            <Button
+              type='submit'
+              disabled={loading || !tokenBalanceEnabled}
+              className='sm:w-36'
+            >
+              <Search className='h-4 w-4' />
+              {loading ? t('Checking...') : t('Check Balance')}
+            </Button>
           </div>
-          <div>
-            <h1 className='text-2xl font-semibold tracking-normal'>
-              {t('Token Balance Lookup')}
-            </h1>
-            <p className='text-muted-foreground mt-1 text-sm'>
-              {t('Paste an API key to check its quota without signing in.')}
+          {!tokenBalanceEnabled && (
+            <p className='text-muted-foreground mt-2 text-sm'>
+              {t('Token balance lookup is disabled.')}
             </p>
-          </div>
-        </div>
-
-        <form className='space-y-4' onSubmit={handleSubmit}>
-          <div className='space-y-2'>
-            <Label htmlFor='token-balance-key'>{t('API Key')}</Label>
-            <div className='flex flex-col gap-2 sm:flex-row'>
-              <Input
-                id='token-balance-key'
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder={t('Enter API key')}
-                autoComplete='off'
-                disabled={!tokenBalanceEnabled}
-              />
-              <Button
-                type='submit'
-                disabled={loading || !tokenBalanceEnabled}
-                className='sm:w-36'
-              >
-                <Search className='h-4 w-4' />
-                {loading ? t('Checking...') : t('Check Balance')}
-              </Button>
-            </div>
-            {!tokenBalanceEnabled && (
-              <p className='text-muted-foreground text-sm'>
-                {t('Token balance lookup is disabled.')}
-              </p>
-            )}
-          </div>
+          )}
         </form>
 
         {result && (
-          <section className='mt-6 rounded-md border px-4 py-2'>
+          <section className='mt-4 rounded-md border px-4 py-2'>
             <BalanceRow label={t('Token Name')} value={result.token_name} />
             <BalanceRow
               label={t('Status')}

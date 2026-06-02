@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@douyinfe/semi-ui';
 import { showError } from '../../../helpers';
-import { StatusContext } from '../../../context/Status';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
 
@@ -35,9 +34,6 @@ const TokensActions = ({
   // Modal states
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [statusState] = useContext(StatusContext);
-  const tokenBalanceEnabled =
-    statusState?.status?.token_balance_enabled !== false;
 
   // Handle copy selected tokens with options
   const handleCopySelectedTokens = () => {
@@ -79,19 +75,6 @@ const TokensActions = ({
         >
           {t('添加令牌')}
         </Button>
-
-        {tokenBalanceEnabled && (
-          <Button
-            type='tertiary'
-            className='flex-1 md:flex-initial'
-            onClick={() => {
-              window.location.href = '/token-balance';
-            }}
-            size='small'
-          >
-            {t('查询余额')}
-          </Button>
-        )}
 
         <Button
           type='tertiary'

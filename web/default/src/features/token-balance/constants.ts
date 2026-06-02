@@ -16,21 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { useApiKeys } from './api-keys-provider'
+import { type StatusBadgeProps } from '@/components/status-badge'
 
-export function ApiKeysPrimaryButtons() {
-  const { t } = useTranslation()
-  const { setOpen } = useApiKeys()
-
-  return (
-    <div className='flex gap-2'>
-      <Button size='sm' onClick={() => setOpen('create')}>
-        <Plus className='h-4 w-4' />
-        {t('Create API Key')}
-      </Button>
-    </div>
-  )
-}
+export const TOKEN_STATUS_BADGES: Record<
+  number,
+  Pick<StatusBadgeProps, 'variant'> & {
+    label: string
+  }
+> = {
+  1: {
+    label: 'Enabled',
+    variant: 'success',
+  },
+  2: {
+    label: 'Disabled',
+    variant: 'neutral',
+  },
+  3: {
+    label: 'Expired',
+    variant: 'warning',
+  },
+  4: {
+    label: 'Exhausted',
+    variant: 'danger',
+  },
+} as const

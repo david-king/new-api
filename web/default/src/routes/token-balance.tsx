@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
-import { TokenBalanceLookup } from '@/features/keys/components/token-balance-lookup'
+import { TokenBalance } from '@/features/token-balance'
 
 export const Route = createFileRoute('/token-balance')({
-  component: TokenBalanceLookup,
+  component: TokenBalance,
 })
