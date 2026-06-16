@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -150,6 +151,36 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
+func taskUsageStatisticsDate(task *model.Task) string {
+	ts := task.SubmitTime
+	if ts <= 0 {
+		ts = task.CreatedAt
+	}
+	if ts <= 0 {
+		return time.Now().Format("2006-01-02")
+	}
+	return time.Unix(ts, 0).Format("2006-01-02")
+}
+
+func adjustTaskUsageStatistics(ctx context.Context, task *model.Task, quotaDelta int) {
+	if !common.LogConsumeEnabled || task == nil || quotaDelta == 0 {
+		return
+	}
+	tokenId := task.PrivateData.TokenId
+	modelName := taskModelName(task)
+	if tokenId <= 0 || modelName == "" {
+		return
+	}
+
+	tokenName := ""
+	if token, err := model.GetTokenById(tokenId); err == nil {
+		tokenName = token.Name
+	}
+	if err := model.AdjustUsageStatisticsQuota(taskUsageStatisticsDate(task), tokenId, tokenName, modelName, quotaDelta); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("调整任务用量统计失败 (delta=%d, task=%s): %s", quotaDelta, task.TaskID, err.Error()))
+	}
+}
+
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
@@ -167,7 +198,10 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	// 2. 退还令牌额度
 	taskAdjustTokenQuota(ctx, task, -quota)
 
-	// 3. 记录日志
+	// 3. 回写用量统计净额
+	adjustTaskUsageStatistics(ctx, task, -quota)
+
+	// 4. 记录日志
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
@@ -230,6 +264,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
 	}
+	adjustTaskUsageStatistics(ctx, task, quotaDelta)
+
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota

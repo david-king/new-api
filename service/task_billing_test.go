@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 		&model.Channel{},
 		&model.TopUp{},
 		&model.UserSubscription{},
+		&model.UsageStatistics{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -66,6 +67,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		model.DB.Exec("DELETE FROM usage_statistics")
 	})
 }
 
@@ -110,16 +112,18 @@ func seedChannel(t *testing.T, id int) {
 }
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
+	now := time.Now().Unix()
 	return &model.Task{
-		TaskID:    "task_" + time.Now().Format("150405.000"),
-		UserId:    userId,
-		ChannelId: channelId,
-		Quota:     quota,
-		Status:    model.TaskStatus(model.TaskStatusInProgress),
-		Group:     "default",
-		Data:      json.RawMessage(`{}`),
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
+		TaskID:     "task_" + time.Now().Format("150405.000"),
+		UserId:     userId,
+		ChannelId:  channelId,
+		Quota:      quota,
+		Status:     model.TaskStatus(model.TaskStatusInProgress),
+		Group:      "default",
+		Data:       json.RawMessage(`{}`),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		SubmitTime: now,
 		Properties: model.Properties{
 			OriginModelName: "test-model",
 		},
@@ -185,6 +189,35 @@ func countLogs(t *testing.T) int64 {
 	return count
 }
 
+func seedTaskUsageQuota(t *testing.T, task *model.Task, quota int) {
+	t.Helper()
+	require.NoError(t, model.UpsertUsageStatistics(
+		taskUsageStatisticsDate(task),
+		task.PrivateData.TokenId,
+		"test_token",
+		taskModelName(task),
+		1,
+		1,
+		0,
+		0,
+		0,
+		0,
+		quota,
+	))
+}
+
+func getTaskUsageStatistics(t *testing.T, task *model.Task) model.UsageStatistics {
+	t.Helper()
+	var stat model.UsageStatistics
+	require.NoError(t, model.DB.Where(
+		"date = ? AND token_id = ? AND model_name = ?",
+		taskUsageStatisticsDate(task),
+		task.PrivateData.TokenId,
+		taskModelName(task),
+	).First(&stat).Error)
+	return stat
+}
+
 // ===========================================================================
 // RefundTaskQuota tests
 // ===========================================================================
@@ -202,6 +235,7 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	seedTaskUsageQuota(t, task, preConsumed)
 
 	RefundTaskQuota(ctx, task, "task failed: upstream error")
 
@@ -218,6 +252,10 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
+
+	stat := getTaskUsageStatistics(t, task)
+	assert.Equal(t, 0, stat.TotalQuota)
+	assert.Equal(t, 1, stat.TotalRequests)
 }
 
 func TestRefundTaskQuota_Subscription(t *testing.T) {
@@ -308,6 +346,7 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	seedTaskUsageQuota(t, task, preConsumed)
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
@@ -325,6 +364,10 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+
+	stat := getTaskUsageStatistics(t, task)
+	assert.Equal(t, actualQuota, stat.TotalQuota)
+	assert.Equal(t, 1, stat.TotalRequests)
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {
@@ -341,6 +384,7 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	seedTaskUsageQuota(t, task, preConsumed)
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
@@ -358,6 +402,10 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+
+	stat := getTaskUsageStatistics(t, task)
+	assert.Equal(t, actualQuota, stat.TotalQuota)
+	assert.Equal(t, 1, stat.TotalRequests)
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {

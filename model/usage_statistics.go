@@ -68,6 +68,30 @@ func RecordUsageStatistics(tokenId int, tokenName, modelName string, promptToken
 	)
 }
 
+// AdjustUsageStatisticsQuota applies a quota-only delta without changing request or token counters.
+func AdjustUsageStatisticsQuota(date string, tokenId int, tokenName, modelName string, quotaDelta int) error {
+	if tokenId <= 0 || modelName == "" || quotaDelta == 0 {
+		return nil
+	}
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	return UpsertUsageStatistics(
+		date,
+		tokenId,
+		tokenName,
+		modelName,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		quotaDelta,
+	)
+}
+
 func UpsertUsageStatistics(date string, tokenId int, tokenName, modelName string, totalRequests, successfulRequests, failedRequests int, totalTokens, promptTokens, completionTokens, totalQuota int) error {
 	now := common.GetTimestamp()
 	record := UsageStatistics{
